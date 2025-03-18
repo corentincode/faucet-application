@@ -1,36 +1,122 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ERC-20 Token Faucet
 
-## Getting Started
+Un portail web moderne et réactif permettant aux utilisateurs de demander des jetons ERC-20 de test sur le réseau Polygon Amoy. Construit avec Next.js, Wagmi v2 et Tailwind CSS.
 
-First, run the development server:
+## Fonctionnalités
+
+- 🔗 Connexion avec n'importe quel portefeuille Ethereum via Wagmi
+- 🪙 Demande de jetons de test avec montants personnalisables
+- 📊 Affichage du solde de jetons et des limites d'utilisation quotidiennes
+- 🔄 Mises à jour en temps réel du statut des transactions
+- 🌓 Interface utilisateur moderne avec design glassmorphique
+- 📱 Entièrement responsive sur tous les appareils
+
+## Technologies
+
+- **Frontend**: Next.js 14, React 19, TypeScript
+- **Styling**: Tailwind CSS, Framer Motion
+- **Web3**: Wagmi v2, Viem
+- **Smart Contract**: Solidity (ERC-20 avec fonctionnalité de faucet)
+- **Composants UI**: Radix UI, icônes Lucide React
+
+## Installation
+
+### Prérequis
+
+- Node.js 18+ et npm/yarn
+- MetaMask ou tout autre portefeuille Ethereum
+- Accès au réseau de test Polygon Amoy
+
+### Configuration
+
+1. Installez les dépendances :
+
+```bash
+npm install
+# ou
+yarn install
+```
+
+2. Configurez l'adresse du jeton :
+
+Créez un fichier `.env` à la racine du projet :
+```bash
+NEXT_PUBLIC_TOKEN_ADDRESS="YOUR_TOKEN_CONTRACT_ADRESS"
+```
+
+3. Démarrez le serveur de développement :
 
 ```bash
 npm run dev
-# or
+# ou
 yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Ouvrez : http://localhost:3000
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Déploiement du Smart Contract
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Le faucet nécessite un contrat de jeton ERC-20 avec des fonctionnalités de mint supplémentaires. Suivez ces étapes pour déployer le vôtre :
 
-## Learn More
+1. Installez Forge (si ce n'est pas déjà fait) :
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+curl -L https://foundry.paradigm.xyz | bash
+foundryup
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+2. Compilez le contrat :
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+forge build
+```
 
-## Deploy on Vercel
+3. Déployez sur le réseau de test Polygon Amoy :
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+forge create --rpc-url https://rpc-amoy.polygon.technology/ --private-key VOTRE_CLE_PRIVEE src/TokenWithFaucet.sol:TokenWithFaucet --constructor-args "Votre Jeton" "VTK" 18
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Utilisation
+
+1. Connectez votre portefeuille en cliquant sur le bouton "Connect Wallet".
+2. Une fois connecté, vous verrez votre solde actuel de jetons et votre utilisation quotidienne.
+3. Utilisez le curseur ou le champ de saisie pour sélectionner le montant de jetons que vous souhaitez demander.
+4. Cliquez sur "Request" pour initier la transaction.
+5. Approuvez la transaction dans votre portefeuille.
+6. Attendez que la transaction soit confirmée sur la blockchain.
+7. Votre solde mis à jour s'affichera automatiquement.
+
+## Structure du Projet
+
+```bash
+├── app/                  # Répertoire Next.js app
+│   ├── globals.css       # Styles globaux
+│   ├── layout.tsx        # Layout racine
+│   ├── page.tsx          # Composant de page principale
+│   └── providers.tsx     # Fournisseurs Wagmi
+├── components/           # Composants React
+│   ├── connect-button.tsx  # Bouton de connexion au portefeuille
+│   ├── faucet-form.tsx     # Formulaire de demande de jetons
+│   ├── token-info.tsx      # Affichage des informations sur les jetons
+│   └── ui/                 # Composants UI
+├── lib/                  # Fonctions utilitaires et constantes
+│   ├── constants.ts      # Constantes de l'application
+│   ├── token-abi.ts      # ABI du jeton
+│   └── utils.ts          # Fonctions utilitaires
+└── public/               # Ressources statiques
+```
+## Contribution
+
+Les contributions sont les bienvenues ! N'hésitez pas à soumettre une Pull Request.
+
+1. Forkez le dépôt
+2. Créez votre branche de fonctionnalité (`git checkout -b feature/fonctionnalite-incroyable`)
+3. Committez vos changements (`git commit -m 'Ajout d'une fonctionnalité incroyable'`)
+4. Poussez vers la branche (`git push origin feature/fonctionnalite-incroyable`)
+5. Ouvrez une Pull Request
+
+
+## Licence
+
+Ce projet est sous licence MIT - voir le fichier LICENSE pour plus de détails.
