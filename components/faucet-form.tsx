@@ -1,88 +1,117 @@
-"use client";
+"use client"
 
-import { useState, useEffect } from "react";
-import { parseEther } from "viem";
-import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Card, CardContent } from "@/components/ui/card";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Loader2, Droplets, AlertCircle, CheckCircle2, ExternalLink } from 'lucide-react';
-import { tokenABI } from "@/lib/token-abi";
-import { TOKEN_ADDRESS } from "@/lib/constants";
-import { motion, AnimatePresence } from "framer-motion";
-import { Slider } from "@/components/ui/slider";
+import type React from "react"
+
+import { useState, useEffect } from "react"
+import { useAccount, useWriteContract, useWaitForTransactionReceipt, useChainId } from "wagmi"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Droplets, AlertCircle, Loader2, CheckCircle } from "lucide-react"
+import { parseEther } from "viem"
+import { motion } from "framer-motion"
+import { tokenABI } from "@/lib/token-abi"
+import { TOKEN_ADDRESS } from "@/lib/constants"
+import { ResetUsageButton } from "./reset-usage-button"
+
+// Définir l'ID de chaîne Polygon Amoy
+const POLYGON_AMOY_CHAIN_ID = 80002
 
 // Create a custom event for balance updates
-export const balanceUpdateEvent = new Event('balanceUpdate');
+export const balanceUpdateEvent = new Event("balanceUpdate")
 
 export function FaucetForm() {
-  const [amount, setAmount] = useState("10");
-  const [error, setError] = useState("");
-  const { address } = useAccount();
+  const [amount, setAmount] = useState("1")
+  const [error, setError] = useState("")
+  const [success, setSuccess] = useState("")
+  const { address, isConnected } = useAccount()
+  const chainId = useChainId()
+  const [ethereumChainId, setEthereumChainId] = useState<number | null>(null)
 
-  const { 
-    writeContract, 
-    isPending: isMinting,
-    error: writeError,
-    data: hash
-  } = useWriteContract();
-
-  const { 
-    isLoading: isConfirming,
-    isSuccess: isConfirmed,
-    error: waitError
-  } = useWaitForTransactionReceipt({
-    hash,
-  });
-
-  // Handle success with useEffect instead of onSuccess callback
+  // Récupérer l'ID de chaîne directement depuis window.ethereum
   useEffect(() => {
-    if (isConfirmed) {
-      setAmount("10");
-      // Dispatch event to notify other components to update
-      window.dispatchEvent(balanceUpdateEvent);
+    async function getEthereumChainId() {
+      if (window.ethereum && typeof window.ethereum.request === "function") {
+        try {
+          const chainIdHex = await window.ethereum.request({ method: "eth_chainId" })
+          const chainIdDecimal = Number.parseInt(chainIdHex, 16)
+          setEthereumChainId(chainIdDecimal)
+        } catch (error) {
+          console.error("Erreur lors de la récupération de l'ID de chaîne:", error)
+        }
+      }
     }
-  }, [isConfirmed]);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setError("");
-    
-    if (!amount || parseFloat(amount) <= 0) {
-      setError("Please enter a valid amount");
-      return;
+    if (isConnected) {
+      getEthereumChainId()
     }
+
+    // Ajouter un écouteur pour les changements de chaîne
+    if (window.ethereum) {
+      const handleChainChanged = (chainId: string) => {
+        const chainIdDecimal = Number.parseInt(chainId, 16)
+        setEthereumChainId(chainIdDecimal)
+      }
+
+      window.ethereum.on("chainChanged", handleChainChanged)
+
+      return () => {
+        window.ethereum.removeListener("chainChanged", handleChainChanged)
+      }
+    }
+  }, [isConnected])
+
+  // Utiliser ethereumChainId s'il est disponible, sinon utiliser chainId de wagmi
+  const effectiveChainId = ethereumChainId !== null ? ethereumChainId : chainId
+  const isCorrectNetwork = effectiveChainId === POLYGON_AMOY_CHAIN_ID
+
+  const { writeContract, isPending, data: hash } = useWriteContract()
+
+  const { isSuccess, isLoading: isConfirming } = useWaitForTransactionReceipt({
+    hash,
+  })
+
+  // Utiliser useEffect pour gérer le succès de la transaction
+  useEffect(() => {
+    if (isSuccess && !success) {
+      setSuccess(`${amount} tokens ont été ajoutés à votre portefeuille!`)
+      // Utiliser setTimeout pour éviter les mises à jour d'état pendant le rendu
+      setTimeout(() => {
+        window.dispatchEvent(balanceUpdateEvent)
+      }, 0)
+    }
+  }, [isSuccess, success, amount])
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError("")
+    setSuccess("")
 
     if (!address) {
-      setError("Please connect your wallet first");
-      return;
+      setError("Veuillez connecter votre portefeuille")
+      return
+    }
+
+    if (!isCorrectNetwork) {
+      setError("Veuillez vous connecter au réseau Polygon Amoy")
+      return
     }
 
     try {
-      writeContract({
-        address: TOKEN_ADDRESS,
+      const parsedAmount = parseEther(amount)
+
+      await writeContract({
+        address: TOKEN_ADDRESS as `0x${string}`,
         abi: tokenABI,
-        functionName: 'mint',
-        args: [address, parseEther(amount)]
-      });
+        functionName: "mint",
+        args: [address, parsedAmount],
+      })
     } catch (err) {
-      setError(`Failed to request tokens: ${err instanceof Error ? err.message : String(err)}`);
+      console.error("Erreur lors du mint:", err)
+      setError(`Erreur: ${err instanceof Error ? err.message : String(err)}`)
     }
-  };
-
-  const handleSliderChange = (value: number[]) => {
-    setAmount(value[0].toString());
-  };
-
-  const displayError = error || writeError?.message || waitError?.message;
-  const isLoading = isMinting || isConfirming;
-
-  const openTransaction = () => {
-    if (hash) {
-      window.open(`https://amoy.polygonscan.com/tx/${hash}`, '_blank');
-    }
-  };
+  }
 
   return (
     <motion.div
@@ -95,106 +124,82 @@ export function FaucetForm() {
         <CardContent className="p-6">
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-4">
-              <div className="flex items-center">
-                <Droplets className="h-5 w-5 text-primary mr-2" />
-                <h3 className="text-lg font-medium text-foreground">Request Tokens</h3>
-              </div>
-              
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center">
-                    <label htmlFor="amount" className="text-sm text-muted-foreground">
-                      Amount to request
-                    </label>
-                    <span className="text-sm font-medium text-foreground">{amount} tokens</span>
-                  </div>
-                  
-                  <Slider
-                    defaultValue={[10]}
-                    max={100}
-                    min={1}
-                    step={1}
-                    value={[parseFloat(amount)]}
-                    onValueChange={handleSliderChange}
-                    className="my-4"
-                  />
-                  
-                  <div className="flex space-x-2">
-                    <Input
-                      id="amount"
-                      type="number"
-                      value={amount}
-                      onChange={(e) => setAmount(e.target.value)}
-                      className="bg-secondary/50 border-border text-foreground"
-                      placeholder="Enter amount"
-                      min="1"
-                      max="100"
-                    />
-                    <Button 
-                      type="submit" 
-                      disabled={!address || isLoading}
-                      className="min-w-[120px] bg-primary hover:bg-primary/90 text-primary-foreground"
-                    >
-                      {isLoading ? (
-                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                      ) : (
-                        <Droplets className="h-4 w-4 mr-2" />
-                      )}
-                      {isLoading ? "Processing" : "Request"}
-                    </Button>
-                  </div>
-                  <p className="text-xs text-muted-foreground">Maximum 100 tokens per day</p>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center">
+                  <Droplets className="h-5 w-5 text-primary mr-2" />
+                  <h3 className="text-lg font-medium text-foreground">Demander des Tokens</h3>
                 </div>
+                <ResetUsageButton />
+              </div>
+
+              <div className="bg-secondary/50 p-4 rounded-lg border border-border">
+                <p className="text-sm text-muted-foreground mb-4">
+                  Demandez des tokens ERC-20 pour tester les fonctionnalités de notre application. Vous pouvez demander
+                  jusqu'à 10 tokens par jour.
+                </p>
+
+                <div className="flex flex-col space-y-4">
+                  <div className="space-y-2">
+                    <label htmlFor="amount" className="text-sm font-medium">
+                      Quantité de tokens
+                    </label>
+                    <div className="flex space-x-2">
+                      <Input
+                        id="amount"
+                        type="number"
+                        min="0.1"
+                        max="10"
+                        step="0.1"
+                        value={amount}
+                        onChange={(e) => setAmount(e.target.value)}
+                        className="bg-background/50"
+                      />
+                      <Button
+                        type="submit"
+                        disabled={!address || isPending || isConfirming || !isCorrectNetwork}
+                        className="bg-primary hover:bg-primary/90 text-primary-foreground"
+                      >
+                        {isPending || isConfirming ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                            {isPending ? "Confirmation..." : "Transaction..."}
+                          </>
+                        ) : (
+                          <>
+                            <Droplets className="h-4 w-4 mr-2" />
+                            Demander
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                {!isCorrectNetwork && isConnected && (
+                  <p className="text-xs text-destructive mt-2 text-center">
+                    Vous devez être connecté au réseau Polygon Amoy pour demander des tokens.
+                  </p>
+                )}
               </div>
             </div>
 
-            <AnimatePresence>
-              {hash && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  exit={{ opacity: 0, height: 0 }}
-                >
-                  <Alert className="bg-primary/10 border-primary/30 text-foreground">
-                    <div className="flex items-center">
-                      {isConfirmed ? (
-                        <CheckCircle2 className="h-4 w-4 text-green-400 mr-2" />
-                      ) : (
-                        <Loader2 className="h-4 w-4 animate-spin text-primary mr-2" />
-                      )}
-                      <AlertDescription className="flex-1">
-                        {isConfirmed ? 'Transaction confirmed!' : 'Transaction submitted!'} 
-                      </AlertDescription>
-                      <button 
-                        onClick={openTransaction}
-                        className="text-primary hover:text-primary/80 transition-colors"
-                      >
-                        <ExternalLink className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </Alert>
-                </motion.div>
-              )}
+            {error && (
+              <Alert className="bg-destructive/10 border-destructive/30 text-foreground">
+                <AlertCircle className="h-4 w-4 text-destructive mr-2" />
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
 
-              {displayError && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  exit={{ opacity: 0, height: 0 }}
-                >
-                  <Alert className="bg-destructive/10 border-destructive/30 text-foreground">
-                    <AlertCircle className="h-4 w-4 text-destructive mr-2" />
-                    <AlertDescription>
-                      {displayError}
-                    </AlertDescription>
-                  </Alert>
-                </motion.div>
-              )}
-            </AnimatePresence>
+            {success && (
+              <Alert className="bg-green-500/10 border-green-500/30 text-foreground">
+                <CheckCircle className="h-4 w-4 text-green-500 mr-2" />
+                <AlertDescription>{success}</AlertDescription>
+              </Alert>
+            )}
           </form>
         </CardContent>
       </Card>
     </motion.div>
-  );
+  )
 }
 
