@@ -1,5 +1,8 @@
 "use client"
 
+import { Skeleton } from "@/components/ui/skeleton"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import type React from "react"
 import { useState, useEffect } from "react"
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from "wagmi"
 import { Button } from "@/components/ui/button"
@@ -7,15 +10,15 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { AlertCircle, Loader2, CheckCircle, Plus, Pencil, Store, Tag } from 'lucide-react'
+import { AlertCircle, Loader2, CheckCircle, Pencil, Store, Tag, ShoppingBag } from "lucide-react"
 import { parseEther, formatEther } from "viem"
 import { marketplaceABI } from "@/lib/marketplace-abi"
-import { MARKETPLACE_ADDRESS } from "@/lib/constants"
+import { nftABI } from "@/lib/nft-abi"
+import { MARKETPLACE_ADDRESS, NFT_ADDRESS } from "@/lib/constants"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import { motion } from "framer-motion"
-import { Skeleton } from "./ui/skeleton"
 
 // Interface Product
 interface Product {
@@ -35,6 +38,17 @@ interface Product {
   }
 }
 
+// Interface pour les NFTs possédés
+interface OwnedNFT {
+  tokenId: bigint
+  tokenURI: string
+  parsedMetadata?: {
+    name: string
+    description: string
+    image: string
+  }
+}
+
 export function MyProducts() {
   const [productName, setProductName] = useState("")
   const [productDescription, setProductDescription] = useState("")
@@ -44,6 +58,9 @@ export function MyProducts() {
   const [isActive, setIsActive] = useState(true)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
+  const [activeTab, setActiveTab] = useState("listed")
+  const [ownedNFTs, setOwnedNFTs] = useState<OwnedNFT[]>([])
+  const [isLoadingNFTs, setIsLoadingNFTs] = useState(true)
   const { address, isConnected } = useAccount()
 
   // Read user's products
@@ -62,6 +79,89 @@ export function MyProducts() {
     },
   })
 
+  // Get NFT balance
+  const { data: balanceData } = useReadContract({
+    address: NFT_ADDRESS as `0x${string}`,
+    abi: nftABI,
+    functionName: "balanceOf",
+    args: [address || "0x0000000000000000000000000000000000000000"],
+    query: {
+      enabled: !!address,
+    },
+  })
+
+  // Fonction pour récupérer les NFTs possédés
+  useEffect(() => {
+    const fetchOwnedNFTs = async () => {
+      if (!address || !balanceData) return
+
+      setIsLoadingNFTs(true)
+      const balance = Number(balanceData)
+
+      if (balance === 0) {
+        setOwnedNFTs([])
+        setIsLoadingNFTs(false)
+        return
+      }
+
+      try {
+        // Créer un tableau pour stocker les requêtes de tokenOfOwnerByIndex
+        const tokenIndexQueries = []
+        for (let i = 0; i < balance; i++) {
+          tokenIndexQueries.push({
+            address: NFT_ADDRESS as `0x${string}`,
+            abi: nftABI,
+            functionName: "tokenOfOwnerByIndex",
+            args: [address, BigInt(i)],
+          })
+        }
+
+        // Exécuter toutes les requêtes en parallèle
+        const tokenIds = await Promise.all(tokenIndexQueries.map((query) => useReadContract.fetch(query)))
+
+        // Créer un tableau pour stocker les requêtes de tokenURI
+        const tokenURIQueries = tokenIds.map((tokenId) => ({
+          address: NFT_ADDRESS as `0x${string}`,
+          abi: nftABI,
+          functionName: "tokenURI",
+          args: [tokenId],
+        }))
+
+        // Exécuter toutes les requêtes en parallèle
+        const tokenURIs = await Promise.all(tokenURIQueries.map((query) => useReadContract.fetch(query)))
+
+        // Combiner les résultats
+        const nfts = tokenIds.map((tokenId, index) => {
+          const tokenURI = tokenURIs[index] as string
+          let parsedMetadata
+
+          try {
+            // Si l'URI est un JSON, on essaie de le parser
+            if (tokenURI.startsWith("{")) {
+              parsedMetadata = JSON.parse(tokenURI)
+            }
+          } catch (e) {
+            console.error("Erreur lors du parsing des métadonnées:", e)
+          }
+
+          return {
+            tokenId: tokenId as bigint,
+            tokenURI,
+            parsedMetadata,
+          }
+        })
+
+        setOwnedNFTs(nfts)
+      } catch (error) {
+        console.error("Erreur lors de la récupération des NFTs:", error)
+      } finally {
+        setIsLoadingNFTs(false)
+      }
+    }
+
+    fetchOwnedNFTs()
+  }, [address, balanceData])
+
   const { writeContract, isPending, data: hash } = useWriteContract()
 
   const { isSuccess, isLoading: isConfirming } = useWaitForTransactionReceipt({
@@ -69,28 +169,32 @@ export function MyProducts() {
   })
 
   // Process products to parse metadata
-  const [processedProducts, setProcessedProducts] = useState<Product[]>([])
-  
+  const [activeProducts, setActiveProducts] = useState<Product[]>([])
+  const [inactiveProducts, setInactiveProducts] = useState<Product[]>([])
+
   useEffect(() => {
     if (myProducts) {
-      const processed = (myProducts as Product[]).map(product => {
+      const processed = (myProducts as Product[]).map((product) => {
         try {
           if (product.metadata) {
-            const parsedMetadata = JSON.parse(product.metadata);
+            const parsedMetadata = JSON.parse(product.metadata)
             return {
               ...product,
-              parsedMetadata
-            };
+              parsedMetadata,
+            }
           }
-          return product;
+          return product
         } catch (e) {
-          console.error("Erreur lors du parsing des métadonnées:", e);
-          return product;
+          console.error("Erreur lors du parsing des métadonnées:", e)
+          return product
         }
-      });
-      setProcessedProducts(processed);
+      })
+
+      // Séparer les produits actifs et inactifs
+      setActiveProducts(processed.filter((p) => p.active))
+      setInactiveProducts(processed.filter((p) => !p.active))
     }
-  }, [myProducts]);
+  }, [myProducts])
 
   // Update success state and reset form
   useEffect(() => {
@@ -134,7 +238,7 @@ export function MyProducts() {
       const metadata = JSON.stringify({
         name: productName,
         description: productDescription,
-        image: imageUrl || (editingProduct.parsedMetadata?.image || "https://via.placeholder.com/500"),
+        image: imageUrl || editingProduct.parsedMetadata?.image || "https://via.placeholder.com/500",
       })
 
       console.log("Tentative de mise à jour du produit:", {
@@ -143,21 +247,14 @@ export function MyProducts() {
         description: productDescription,
         price: parseEther(productPrice),
         active: isActive,
-        metadata
+        metadata,
       })
 
       await writeContract({
         address: MARKETPLACE_ADDRESS as `0x${string}`,
         abi: marketplaceABI,
         functionName: "updateProduct",
-        args: [
-          editingProduct.id,
-          productName,
-          productDescription,
-          parseEther(productPrice),
-          isActive,
-          metadata
-        ],
+        args: [editingProduct.id, productName, productDescription, parseEther(productPrice), isActive, metadata],
       })
     } catch (err) {
       console.error("Erreur lors de la mise à jour du produit:", err)
@@ -292,62 +389,169 @@ export function MyProducts() {
 
           <Separator />
 
-          <div>
-            <h3 className="text-lg font-medium mb-4">Mes produits</h3>
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+            <TabsList className="grid grid-cols-3 mb-4">
+              <TabsTrigger value="listed" className="flex items-center">
+                <Tag className="h-4 w-4 mr-2" />
+                <span>En vente</span>
+              </TabsTrigger>
+              <TabsTrigger value="sold" className="flex items-center">
+                <Store className="h-4 w-4 mr-2" />
+                <span>Vendus</span>
+              </TabsTrigger>
+              <TabsTrigger value="owned" className="flex items-center">
+                <ShoppingBag className="h-4 w-4 mr-2" />
+                <span>Mes NFTs</span>
+              </TabsTrigger>
+            </TabsList>
 
-            {isLoadingProducts ? (
-              <div className="space-y-2">
-                {[1, 2, 3].map((i) => (
-                  <div key={i} className="bg-secondary/50 p-4 rounded-lg">
-                    <Skeleton className="h-6 w-3/4 mb-2" />
-                    <Skeleton className="h-4 w-full mb-2" />
-                    <Skeleton className="h-4 w-1/4" />
-                  </div>
-                ))}
-              </div>
-            ) : processedProducts && processedProducts.length > 0 ? (
-              <div className="space-y-4">
-                {processedProducts.map((product) => (
-                  <div key={product.id.toString()} className="bg-secondary/50 p-4 rounded-lg border border-border">
-                    <div className="flex justify-between items-start">
-                      <div className="flex-1">
-                        {product.parsedMetadata?.image && (
-                          <div className="aspect-square w-full max-w-[120px] bg-background/50 rounded-md mb-3 overflow-hidden float-right ml-3">
-                            <img 
-                              src={product.parsedMetadata.image || "/placeholder.svg"} 
-                              alt={product.name}
-                              className="w-full h-full object-cover"
-                            />
-                          </div>
-                        )}
-                        <div className="flex items-center">
-                          <Tag className="h-4 w-4 text-primary mr-2" />
-                          <h4 className="font-medium">{product.name}</h4>
-                          <span
-                            className={`ml-2 px-2 py-0.5 rounded-full text-xs ${product.active ? "bg-green-500/20 text-green-500" : "bg-destructive/20 text-destructive"}`}
-                          >
-                            {product.active ? "Actif" : "Inactif"}
-                          </span>
-                        </div>
-                        <p className="text-sm text-muted-foreground mt-1">{product.description}</p>
-                        <p className="text-sm font-medium mt-2">{formatEther(product.price)} TEST</p>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          NFT ID: {product.tokenId.toString()}
-                        </p>
-                      </div>
-                      <Button variant="ghost" size="sm" onClick={() => setProductToEdit(product)}>
-                        <Pencil className="h-4 w-4" />
-                      </Button>
+            <TabsContent value="listed" className="mt-0">
+              <h3 className="text-lg font-medium mb-4">Produits en vente</h3>
+              {isLoadingProducts ? (
+                <div className="space-y-2">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="bg-secondary/50 p-4 rounded-lg">
+                      <Skeleton className="h-6 w-3/4 mb-2" />
+                      <Skeleton className="h-4 w-full mb-2" />
+                      <Skeleton className="h-4 w-1/4" />
                     </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-muted-foreground text-center py-4">Vous n'avez pas encore de produits</p>
-            )}
-          </div>
+                  ))}
+                </div>
+              ) : activeProducts && activeProducts.length > 0 ? (
+                <div className="space-y-4">
+                  {activeProducts.map((product) => (
+                    <div key={product.id.toString()} className="bg-secondary/50 p-4 rounded-lg border border-border">
+                      <div className="flex justify-between items-start">
+                        <div className="flex-1">
+                          {product.parsedMetadata?.image && (
+                            <div className="aspect-square w-full max-w-[120px] bg-background/50 rounded-md mb-3 overflow-hidden float-right ml-3">
+                              <img
+                                src={product.parsedMetadata.image || "/placeholder.svg"}
+                                alt={product.name}
+                                className="w-full h-full object-cover"
+                              />
+                            </div>
+                          )}
+                          <div className="flex items-center">
+                            <Tag className="h-4 w-4 text-primary mr-2" />
+                            <h4 className="font-medium">{product.name}</h4>
+                            <span className="ml-2 px-2 py-0.5 rounded-full text-xs bg-green-500/20 text-green-500">
+                              Actif
+                            </span>
+                          </div>
+                          <p className="text-sm text-muted-foreground mt-1">{product.description}</p>
+                          <p className="text-sm font-medium mt-2">{formatEther(product.price)} TEST</p>
+                          <p className="text-xs text-muted-foreground mt-1">NFT ID: {product.tokenId.toString()}</p>
+                        </div>
+                        <Button variant="ghost" size="sm" onClick={() => setProductToEdit(product)}>
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-muted-foreground text-center py-4">Vous n'avez pas de produits en vente</p>
+              )}
+            </TabsContent>
+
+            <TabsContent value="sold" className="mt-0">
+              <h3 className="text-lg font-medium mb-4">Produits vendus</h3>
+              {isLoadingProducts ? (
+                <div className="space-y-2">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="bg-secondary/50 p-4 rounded-lg">
+                      <Skeleton className="h-6 w-3/4 mb-2" />
+                      <Skeleton className="h-4 w-full mb-2" />
+                      <Skeleton className="h-4 w-1/4" />
+                    </div>
+                  ))}
+                </div>
+              ) : inactiveProducts && inactiveProducts.length > 0 ? (
+                <div className="space-y-4">
+                  {inactiveProducts.map((product) => (
+                    <div key={product.id.toString()} className="bg-secondary/50 p-4 rounded-lg border border-border">
+                      <div className="flex justify-between items-start">
+                        <div className="flex-1">
+                          {product.parsedMetadata?.image && (
+                            <div className="aspect-square w-full max-w-[120px] bg-background/50 rounded-md mb-3 overflow-hidden float-right ml-3">
+                              <img
+                                src={product.parsedMetadata.image || "/placeholder.svg"}
+                                alt={product.name}
+                                className="w-full h-full object-cover"
+                              />
+                            </div>
+                          )}
+                          <div className="flex items-center">
+                            <Tag className="h-4 w-4 text-primary mr-2" />
+                            <h4 className="font-medium">{product.name}</h4>
+                            <span className="ml-2 px-2 py-0.5 rounded-full text-xs bg-destructive/20 text-destructive">
+                              Vendu
+                            </span>
+                          </div>
+                          <p className="text-sm text-muted-foreground mt-1">{product.description}</p>
+                          <p className="text-sm font-medium mt-2">{formatEther(product.price)} TEST</p>
+                          <p className="text-xs text-muted-foreground mt-1">NFT ID: {product.tokenId.toString()}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-muted-foreground text-center py-4">Vous n'avez pas encore vendu de produits</p>
+              )}
+            </TabsContent>
+
+            <TabsContent value="owned" className="mt-0">
+              <h3 className="text-lg font-medium mb-4">Mes NFTs</h3>
+              {isLoadingNFTs ? (
+                <div className="space-y-2">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="bg-secondary/50 p-4 rounded-lg">
+                      <Skeleton className="h-6 w-3/4 mb-2" />
+                      <Skeleton className="h-4 w-full mb-2" />
+                      <Skeleton className="h-4 w-1/4" />
+                    </div>
+                  ))}
+                </div>
+              ) : ownedNFTs && ownedNFTs.length > 0 ? (
+                <div className="space-y-4">
+                  {ownedNFTs.map((nft) => (
+                    <div key={nft.tokenId.toString()} className="bg-secondary/50 p-4 rounded-lg border border-border">
+                      <div className="flex justify-between items-start">
+                        <div className="flex-1">
+                          {nft.parsedMetadata?.image && (
+                            <div className="aspect-square w-full max-w-[120px] bg-background/50 rounded-md mb-3 overflow-hidden float-right ml-3">
+                              <img
+                                src={nft.parsedMetadata.image || "/placeholder.svg"}
+                                alt={nft.parsedMetadata.name || `NFT #${nft.tokenId.toString()}`}
+                                className="w-full h-full object-cover"
+                              />
+                            </div>
+                          )}
+                          <div className="flex items-center">
+                            <ShoppingBag className="h-4 w-4 text-primary mr-2" />
+                            <h4 className="font-medium">
+                              {nft.parsedMetadata?.name || `NFT #${nft.tokenId.toString()}`}
+                            </h4>
+                          </div>
+                          <p className="text-sm text-muted-foreground mt-1">
+                            {nft.parsedMetadata?.description || "Aucune description"}
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-1">NFT ID: {nft.tokenId.toString()}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-muted-foreground text-center py-4">Vous ne possédez pas encore de NFTs</p>
+              )}
+            </TabsContent>
+          </Tabs>
         </CardContent>
       </Card>
     </motion.div>
   )
 }
+

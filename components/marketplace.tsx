@@ -8,9 +8,9 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { marketplaceABI } from "@/lib/marketplace-abi"
 import { tokenABI } from "@/lib/token-abi"
 import { MARKETPLACE_ADDRESS, TOKEN_ADDRESS } from "@/lib/constants"
-import { formatEther, parseEther } from "viem"
+import { formatEther } from "viem"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Store, Tag, AlertCircle, Loader2, CheckCircle } from 'lucide-react'
+import { Store, Tag, AlertCircle, Loader2, CheckCircle, RefreshCw } from "lucide-react"
 import { motion } from "framer-motion"
 
 // Interface Product
@@ -38,6 +38,7 @@ export function Marketplace() {
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
   const [buyingProductId, setBuyingProductId] = useState<bigint | null>(null)
+  const [isRefreshing, setIsRefreshing] = useState(false)
 
   // Lire les produits actifs
   const { data: activeProducts, refetch } = useReadContract({
@@ -72,29 +73,51 @@ export function Marketplace() {
     hash: isPurchasePending ? undefined : undefined,
   })
 
+  // Fonction pour rafraîchir manuellement les données
+  const handleRefresh = async () => {
+    setIsRefreshing(true)
+    setError("")
+    setSuccess("")
+
+    try {
+      await refetch()
+      if (address) {
+        await refetchAllowance()
+      }
+      setSuccess("Données rafraîchies avec succès!")
+    } catch (err) {
+      console.error("Erreur lors du rafraîchissement des données:", err)
+      setError("Erreur lors du rafraîchissement des données")
+    } finally {
+      setTimeout(() => setIsRefreshing(false), 500)
+    }
+  }
+
   // Traiter les produits pour extraire les métadonnées
   useEffect(() => {
     if (activeProducts) {
       console.log("Produits actifs récupérés:", activeProducts)
-      
-      const processedProducts = (activeProducts as Product[]).map(product => {
-        try {
-          if (product.metadata) {
-            const parsedMetadata = JSON.parse(product.metadata);
-            return {
-              ...product,
-              parsedMetadata
-            };
+
+      const processedProducts = (activeProducts as Product[])
+        .filter((product) => product.active) // Filtrer uniquement les produits actifs
+        .map((product) => {
+          try {
+            if (product.metadata) {
+              const parsedMetadata = JSON.parse(product.metadata)
+              return {
+                ...product,
+                parsedMetadata,
+              }
+            }
+            return product
+          } catch (e) {
+            console.error("Erreur lors du parsing des métadonnées:", e)
+            return product
           }
-          return product;
-        } catch (e) {
-          console.error("Erreur lors du parsing des métadonnées:", e);
-          return product;
-        }
-      });
-      
-      setProducts(processedProducts);
-      setIsLoading(false);
+        })
+
+      setProducts(processedProducts)
+      setIsLoading(false)
     }
   }, [activeProducts])
 
@@ -167,12 +190,23 @@ export function Marketplace() {
       className="w-full"
     >
       <Card className="backdrop-blur-sm bg-secondary/30 border-border overflow-hidden">
-        <CardHeader>
-          <CardTitle className="text-lg flex items-center">
-            <Store className="h-5 w-5 mr-2" />
-            Marketplace
-          </CardTitle>
-          <CardDescription>Découvrez et achetez des NFTs uniques</CardDescription>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div>
+            <CardTitle className="text-lg flex items-center">
+              <Store className="h-5 w-5 mr-2" />
+              Marketplace
+            </CardTitle>
+            <CardDescription>Découvrez et achetez des NFTs uniques</CardDescription>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className="bg-secondary/50 border-border"
+          >
+            <RefreshCw className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`} />
+          </Button>
         </CardHeader>
         <CardContent>
           {error && (
@@ -206,10 +240,14 @@ export function Marketplace() {
                 <div key={product.id.toString()} className="bg-secondary/50 p-4 rounded-lg border border-border">
                   {product.parsedMetadata?.image && (
                     <div className="aspect-square bg-background/50 rounded-md mb-3 overflow-hidden">
-                      <img 
-                        src={product.parsedMetadata.image || "/placeholder.svg"} 
+                      <img
+                        src={product.parsedMetadata.image || "/placeholder.svg"}
                         alt={product.name}
                         className="w-full h-full object-cover"
+                        onError={(e) => {
+                          // Fallback en cas d'erreur de chargement de l'image
+                          e.currentTarget.src = "/placeholder.svg?height=500&width=500"
+                        }}
                       />
                     </div>
                   )}
@@ -226,7 +264,7 @@ export function Marketplace() {
                   <p className="text-xs text-muted-foreground mb-3">
                     Vendeur: {product.seller.substring(0, 6)}...{product.seller.substring(38)}
                   </p>
-                  
+
                   {address === product.seller ? (
                     <Button disabled className="w-full">
                       Vous ne pouvez pas acheter votre propre produit
@@ -269,3 +307,4 @@ export function Marketplace() {
     </motion.div>
   )
 }
+
