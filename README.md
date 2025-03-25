@@ -13,7 +13,7 @@ Un portail web moderne et réactif permettant aux utilisateurs de demander des j
 
 ## Technologies
 
-- **Frontend**: Next.js 14, React 19, TypeScript
+- **Frontend**: Next.js 15, React 19, TypeScript
 - **Styling**: Tailwind CSS, Framer Motion
 - **Web3**: Wagmi v2, Viem
 - **Smart Contract**: Solidity (ERC-20 avec fonctionnalité de faucet)

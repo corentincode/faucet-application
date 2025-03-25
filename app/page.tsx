@@ -4,7 +4,6 @@ import { useState, useEffect } from "react"
 import { ConnectButton } from "@/components/connect-button"
 import { TokenInfo } from "@/components/token-info"
 import { AdminPanel } from "@/components/admin-panel"
-import { MarketplaceAdmin } from "@/components/marketplace-admin"
 import { TabsContainer } from "@/components/tabs-container"
 import { motion } from "framer-motion"
 import { Sparkles } from 'lucide-react'
@@ -125,7 +124,6 @@ export default function Home() {
                   {isOwner && (
                     <>
                       <AdminPanel />
-                      <MarketplaceAdmin />
                     </>
                   )}
                 </motion.div>

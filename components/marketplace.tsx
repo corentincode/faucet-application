@@ -1,20 +1,19 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract } from "wagmi"
+import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from "wagmi"
+import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { AlertCircle, Loader2, CheckCircle, ShoppingBag, Tag, Info, User } from 'lucide-react'
-import { formatEther } from "viem"
-import { motion } from "framer-motion"
-import { tokenABI } from "@/lib/token-abi"
-import { TOKEN_ADDRESS } from "@/lib/constants"
 import { marketplaceABI } from "@/lib/marketplace-abi"
-import { MARKETPLACE_ADDRESS } from "@/lib/marketplace-constants"
-import { balanceUpdateEvent } from "./faucet-form"
+import { tokenABI } from "@/lib/token-abi"
+import { MARKETPLACE_ADDRESS, TOKEN_ADDRESS } from "@/lib/constants"
+import { formatEther, parseEther } from "viem"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Store, Tag, AlertCircle, Loader2, CheckCircle } from 'lucide-react'
+import { motion } from "framer-motion"
 
+// Interface Product
 interface Product {
   id: bigint
   name: string
@@ -22,131 +21,142 @@ interface Product {
   price: bigint
   seller: `0x${string}`
   active: boolean
+  nftContract: `0x${string}`
+  tokenId: bigint
+  metadata: string
+  parsedMetadata?: {
+    name: string
+    description: string
+    image: string
+  }
 }
 
 export function Marketplace() {
-  const [purchaseStatus, setPurchaseStatus] = useState<{
-    id: bigint
-    status: "pending" | "success" | "error"
-    message?: string
-  } | null>(null)
   const { address, isConnected } = useAccount()
+  const [products, setProducts] = useState<Product[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState("")
+  const [success, setSuccess] = useState("")
+  const [buyingProductId, setBuyingProductId] = useState<bigint | null>(null)
 
-  // Read user's token balance
-  const { data: balance } = useReadContract({
-    address: TOKEN_ADDRESS as `0x${string}`,
-    abi: tokenABI,
-    functionName: "balanceOf",
-    args: [address || "0x0000000000000000000000000000000000000000"],
-    query: {
-      enabled: !!address,
-      refetchInterval: 10000, // Refetch every 10 seconds
-    },
-  })
-
-  // Read all products from marketplace
-  const {
-    data: products,
-    isLoading: isLoadingProducts,
-    refetch: refetchProducts,
-  } = useReadContract({
+  // Lire les produits actifs
+  const { data: activeProducts, refetch } = useReadContract({
     address: MARKETPLACE_ADDRESS as `0x${string}`,
     abi: marketplaceABI,
     functionName: "getActiveProducts",
     query: {
-      enabled: true,
       refetchInterval: 30000, // Refetch every 30 seconds
     },
   })
 
-  const formattedBalance = balance ? formatEther(balance as bigint) : "0"
-
-  const { writeContract, isPending } = useWriteContract()
-
-  const { isSuccess, isLoading: isConfirming } = useWaitForTransactionReceipt({
-    hash: purchaseStatus?.status === "pending" ? (purchaseStatus.id as unknown as `0x${string}`) : undefined,
+  // Vérifier l'allowance
+  const { data: allowance, refetch: refetchAllowance } = useReadContract({
+    address: TOKEN_ADDRESS as `0x${string}`,
+    abi: tokenABI,
+    functionName: "allowance",
+    args: [address || "0x0000000000000000000000000000000000000000", MARKETPLACE_ADDRESS],
+    query: {
+      enabled: !!address,
+    },
   })
 
-  // Function to approve marketplace to spend tokens
-  const approveMarketplace = async (amount: bigint) => {
-    if (!address) return
+  // Fonctions pour approuver et acheter
+  const { writeContract: writeApprove, isPending: isApprovePending } = useWriteContract()
+  const { writeContract: writePurchase, isPending: isPurchasePending } = useWriteContract()
+
+  const { isSuccess: isApproveSuccess } = useWaitForTransactionReceipt({
+    hash: isApprovePending ? undefined : undefined,
+  })
+
+  const { isSuccess: isPurchaseSuccess } = useWaitForTransactionReceipt({
+    hash: isPurchasePending ? undefined : undefined,
+  })
+
+  // Traiter les produits pour extraire les métadonnées
+  useEffect(() => {
+    if (activeProducts) {
+      console.log("Produits actifs récupérés:", activeProducts)
+      
+      const processedProducts = (activeProducts as Product[]).map(product => {
+        try {
+          if (product.metadata) {
+            const parsedMetadata = JSON.parse(product.metadata);
+            return {
+              ...product,
+              parsedMetadata
+            };
+          }
+          return product;
+        } catch (e) {
+          console.error("Erreur lors du parsing des métadonnées:", e);
+          return product;
+        }
+      });
+      
+      setProducts(processedProducts);
+      setIsLoading(false);
+    }
+  }, [activeProducts])
+
+  // Mettre à jour après une approbation réussie
+  useEffect(() => {
+    if (isApproveSuccess) {
+      refetchAllowance()
+      setSuccess("Approbation réussie! Vous pouvez maintenant acheter le produit.")
+    }
+  }, [isApproveSuccess, refetchAllowance])
+
+  // Mettre à jour après un achat réussi
+  useEffect(() => {
+    if (isPurchaseSuccess) {
+      refetch()
+      setBuyingProductId(null)
+      setSuccess("Achat réussi! Le NFT a été transféré à votre portefeuille.")
+    }
+  }, [isPurchaseSuccess, refetch])
+
+  // Fonction pour approuver le marketplace à dépenser les tokens
+  const handleApprove = async (product: Product) => {
+    setError("")
+    setSuccess("")
+    setBuyingProductId(product.id)
 
     try {
-      await writeContract({
+      console.log("Tentative d'approbation pour le Marketplace:", MARKETPLACE_ADDRESS)
+
+      await writeApprove({
         address: TOKEN_ADDRESS as `0x${string}`,
         abi: tokenABI,
         functionName: "approve",
-        args: [MARKETPLACE_ADDRESS as `0x${string}`, amount],
+        args: [MARKETPLACE_ADDRESS, product.price],
       })
-      return true
-    } catch (error) {
-      console.error("Erreur lors de l'approbation:", error)
-      return false
+    } catch (err) {
+      console.error("Erreur lors de l'approbation:", err)
+      setError(`Erreur: ${err instanceof Error ? err.message : String(err)}`)
+      setBuyingProductId(null)
     }
   }
 
-  // Function to purchase a product
+  // Fonction pour acheter un produit
   const handlePurchase = async (product: Product) => {
-    if (!address) return
+    setError("")
+    setSuccess("")
+    setBuyingProductId(product.id)
 
     try {
-      setPurchaseStatus({ id: product.id, status: "pending", message: "Approbation des tokens..." })
+      console.log("Tentative d'achat du produit:", product.id.toString())
 
-      // First approve the marketplace to spend tokens
-      const approved = await approveMarketplace(product.price)
-      if (!approved) {
-        setPurchaseStatus({
-          id: product.id,
-          status: "error",
-          message: "Échec de l'approbation des tokens",
-        })
-        return
-      }
-
-      setPurchaseStatus({ id: product.id, status: "pending", message: "Achat en cours..." })
-
-      // Then purchase the product
-      const tx = await writeContract({
+      await writePurchase({
         address: MARKETPLACE_ADDRESS as `0x${string}`,
         abi: marketplaceABI,
         functionName: "purchaseProduct",
         args: [product.id],
       })
-
-      // Update status with transaction hash
-      setPurchaseStatus({ id: product.id, status: "pending" })
-
-      // Status will be updated via useWaitForTransactionReceipt
-    } catch (error) {
-      console.error("Erreur lors de l'achat:", error)
-      setPurchaseStatus({
-        id: product.id,
-        status: "error",
-        message: error instanceof Error ? error.message : "Une erreur est survenue",
-      })
+    } catch (err) {
+      console.error("Erreur lors de l'achat:", err)
+      setError(`Erreur: ${err instanceof Error ? err.message : String(err)}`)
+      setBuyingProductId(null)
     }
-  }
-
-  // Update status when transaction is confirmed
-  useEffect(() => {
-    if (isSuccess && purchaseStatus?.status === "pending") {
-      setPurchaseStatus({
-        id: purchaseStatus.id,
-        status: "success",
-        message: "Achat réussi ! Votre produit sera livré sous peu.",
-      })
-
-      // Trigger balance update
-      window.dispatchEvent(balanceUpdateEvent)
-
-      // Refetch products
-      refetchProducts()
-    }
-  }, [isSuccess, purchaseStatus, refetchProducts])
-
-  // Format seller address
-  const formatAddress = (addr: string) => {
-    return `${addr.substring(0, 6)}...${addr.substring(addr.length - 4)}`
   }
 
   return (
@@ -158,111 +168,103 @@ export function Marketplace() {
     >
       <Card className="backdrop-blur-sm bg-secondary/30 border-border overflow-hidden">
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center">
-              <ShoppingBag className="h-5 w-5 text-primary mr-2" />
-              <CardTitle className="text-lg">Marketplace</CardTitle>
-            </div>
-            <div className="text-sm text-muted-foreground">
-              Solde:{" "}
-              <span className="font-medium text-foreground">{Number.parseFloat(formattedBalance).toFixed(2)} TEST</span>
-            </div>
-          </div>
-          <CardDescription>Achetez des produits et services avec vos tokens TEST</CardDescription>
+          <CardTitle className="text-lg flex items-center">
+            <Store className="h-5 w-5 mr-2" />
+            Marketplace
+          </CardTitle>
+          <CardDescription>Découvrez et achetez des NFTs uniques</CardDescription>
         </CardHeader>
         <CardContent>
-          {isLoadingProducts ? (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {[1, 2, 3].map((i) => (
-                <Card key={i} className="overflow-hidden border border-border">
-                  <div className="h-2 w-full bg-secondary/50"></div>
-                  <CardContent className="p-4">
-                    <Skeleton className="h-12 w-12 rounded-full mx-auto mb-4 mt-2" />
-                    <Skeleton className="h-6 w-3/4 mx-auto mb-2" />
-                    <Skeleton className="h-4 w-full mx-auto mb-4" />
-                    <Skeleton className="h-4 w-1/4 mx-auto mb-4" />
-                    <Skeleton className="h-10 w-full" />
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          ) : products && (products as Product[]).length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {(products as Product[]).map((product) => (
-                <Card key={product.id.toString()} className="overflow-hidden border border-border">
-                  <div className="h-2 w-full bg-gradient-to-r from-primary to-accent"></div>
-                  <CardContent className="p-4">
-                    <div className="flex justify-center mb-4 mt-2">
-                      <div className="p-3 rounded-full bg-secondary/50">
-                        <Tag className="h-8 w-8 text-primary" />
-                      </div>
-                    </div>
-                    <h3 className="font-medium text-center mb-2">{product.name}</h3>
-                    <p className="text-sm text-muted-foreground text-center mb-4">{product.description}</p>
-                    <div className="text-center font-bold text-lg mb-2">
-                      {formatEther(product.price)} <span className="text-sm font-normal">TEST</span>
-                    </div>
-                    <div className="flex items-center justify-center text-xs text-muted-foreground mb-4">
-                      <User className="h-3 w-3 mr-1" />
-                      <span>Vendeur: {formatAddress(product.seller)}</span>
-                    </div>
-                    <Button
-                      onClick={() => handlePurchase(product)}
-                      disabled={
-                        !isConnected ||
-                        isPending ||
-                        isConfirming ||
-                        (purchaseStatus?.id === product.id && purchaseStatus.status === "pending") ||
-                        Number.parseFloat(formattedBalance) < Number.parseFloat(formatEther(product.price)) ||
-                        product.seller.toLowerCase() === address?.toLowerCase()
-                      }
-                      className="w-full"
-                      variant={
-                        Number.parseFloat(formattedBalance) < Number.parseFloat(formatEther(product.price))
-                          ? "outline"
-                          : "default"
-                      }
-                    >
-                      {purchaseStatus?.id === product.id && purchaseStatus.status === "pending" ? (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                          {purchaseStatus.message || "Traitement..."}
-                        </>
-                      ) : Number.parseFloat(formattedBalance) < Number.parseFloat(formatEther(product.price)) ? (
-                        "Solde insuffisant"
-                      ) : product.seller.toLowerCase() === address?.toLowerCase() ? (
-                        "Votre produit"
-                      ) : (
-                        "Acheter"
-                      )}
-                    </Button>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-12">
-              <Info className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-              <h3 className="text-lg font-medium mb-2">Aucun produit disponible</h3>
-              <p className="text-muted-foreground">Les produits seront bientôt disponibles. Revenez plus tard.</p>
-            </div>
-          )}
-        </CardContent>
-        <CardFooter className="block">
-          {purchaseStatus?.status === "success" && (
-            <Alert className="bg-green-500/10 border-green-500/30 text-foreground mt-4">
-              <CheckCircle className="h-4 w-4 text-green-500 mr-2" />
-              <AlertDescription>{purchaseStatus.message}</AlertDescription>
+          {error && (
+            <Alert className="bg-destructive/10 border-destructive/30 text-foreground mb-4">
+              <AlertCircle className="h-4 w-4 text-destructive mr-2" />
+              <AlertDescription>{error}</AlertDescription>
             </Alert>
           )}
 
-          {purchaseStatus?.status === "error" && (
-            <Alert className="bg-destructive/10 border-destructive/30 text-foreground mt-4">
-              <AlertCircle className="h-4 w-4 text-destructive mr-2" />
-              <AlertDescription>{purchaseStatus.message}</AlertDescription>
+          {success && (
+            <Alert className="bg-green-500/10 border-green-500/30 text-foreground mb-4">
+              <CheckCircle className="h-4 w-4 text-green-500 mr-2" />
+              <AlertDescription>{success}</AlertDescription>
             </Alert>
           )}
-        </CardFooter>
+
+          {isLoading ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {[1, 2, 3, 4, 5, 6].map((i) => (
+                <div key={i} className="bg-secondary/50 p-4 rounded-lg">
+                  <Skeleton className="h-40 w-full mb-2" />
+                  <Skeleton className="h-6 w-3/4 mb-2" />
+                  <Skeleton className="h-4 w-full mb-2" />
+                  <Skeleton className="h-8 w-full" />
+                </div>
+              ))}
+            </div>
+          ) : products.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {products.map((product) => (
+                <div key={product.id.toString()} className="bg-secondary/50 p-4 rounded-lg border border-border">
+                  {product.parsedMetadata?.image && (
+                    <div className="aspect-square bg-background/50 rounded-md mb-3 overflow-hidden">
+                      <img 
+                        src={product.parsedMetadata.image || "/placeholder.svg"} 
+                        alt={product.name}
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                  )}
+                  <div className="flex items-start mb-2">
+                    <Tag className="h-4 w-4 text-primary mt-1 mr-2 flex-shrink-0" />
+                    <div>
+                      <h3 className="font-medium">{product.name}</h3>
+                      <p className="text-sm text-muted-foreground">{product.description}</p>
+                    </div>
+                  </div>
+                  <p className="text-sm mb-1">
+                    <span className="font-medium">{formatEther(product.price)} TEST</span>
+                  </p>
+                  <p className="text-xs text-muted-foreground mb-3">
+                    Vendeur: {product.seller.substring(0, 6)}...{product.seller.substring(38)}
+                  </p>
+                  
+                  {address === product.seller ? (
+                    <Button disabled className="w-full">
+                      Vous ne pouvez pas acheter votre propre produit
+                    </Button>
+                  ) : (
+                    <Button
+                      onClick={() => {
+                        // Vérifier si l'utilisateur a déjà approuvé suffisamment de tokens
+                        if (allowance && allowance >= product.price) {
+                          handlePurchase(product)
+                        } else {
+                          handleApprove(product)
+                        }
+                      }}
+                      disabled={!isConnected || isApprovePending || isPurchasePending || buyingProductId === product.id}
+                      className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
+                    >
+                      {isApprovePending || isPurchasePending ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                          {isApprovePending ? "Approbation..." : "Achat..."}
+                        </>
+                      ) : allowance && allowance >= product.price ? (
+                        "Acheter"
+                      ) : (
+                        "Approuver et acheter"
+                      )}
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-8">
+              <p className="text-muted-foreground">Aucun produit disponible pour le moment</p>
+            </div>
+          )}
+        </CardContent>
       </Card>
     </motion.div>
   )

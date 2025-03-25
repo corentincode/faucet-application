@@ -1,11 +1,7 @@
 "use client"
 
-import { Skeleton } from "@/components/ui/skeleton"
-
-import type React from "react"
-
-import { useState } from "react"
-import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract } from "wagmi"
+import { useState, useEffect } from "react"
+import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from "wagmi"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -14,12 +10,14 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { AlertCircle, Loader2, CheckCircle, Plus, Pencil, Store, Tag } from 'lucide-react'
 import { parseEther, formatEther } from "viem"
 import { marketplaceABI } from "@/lib/marketplace-abi"
-import { MARKETPLACE_ADDRESS } from "@/lib/marketplace-constants"
+import { MARKETPLACE_ADDRESS } from "@/lib/constants"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import { motion } from "framer-motion"
+import { Skeleton } from "./ui/skeleton"
 
+// Interface Product
 interface Product {
   id: bigint
   name: string
@@ -27,12 +25,21 @@ interface Product {
   price: bigint
   seller: `0x${string}`
   active: boolean
+  nftContract: `0x${string}`
+  tokenId: bigint
+  metadata: string
+  parsedMetadata?: {
+    name: string
+    description: string
+    image: string
+  }
 }
 
 export function MyProducts() {
   const [productName, setProductName] = useState("")
   const [productDescription, setProductDescription] = useState("")
   const [productPrice, setProductPrice] = useState("")
+  const [imageUrl, setImageUrl] = useState("")
   const [editingProduct, setEditingProduct] = useState<Product | null>(null)
   const [isActive, setIsActive] = useState(true)
   const [error, setError] = useState("")
@@ -55,54 +62,55 @@ export function MyProducts() {
     },
   })
 
-  const { writeContract, isPending } = useWriteContract()
+  const { writeContract, isPending, data: hash } = useWriteContract()
 
   const { isSuccess, isLoading: isConfirming } = useWaitForTransactionReceipt({
-    hash: isPending ? undefined : undefined,
+    hash,
   })
+
+  // Process products to parse metadata
+  const [processedProducts, setProcessedProducts] = useState<Product[]>([])
+  
+  useEffect(() => {
+    if (myProducts) {
+      const processed = (myProducts as Product[]).map(product => {
+        try {
+          if (product.metadata) {
+            const parsedMetadata = JSON.parse(product.metadata);
+            return {
+              ...product,
+              parsedMetadata
+            };
+          }
+          return product;
+        } catch (e) {
+          console.error("Erreur lors du parsing des métadonnées:", e);
+          return product;
+        }
+      });
+      setProcessedProducts(processed);
+    }
+  }, [myProducts]);
+
+  // Update success state and reset form
+  useEffect(() => {
+    if (isSuccess && !success) {
+      setSuccess(editingProduct ? "Produit mis à jour avec succès!" : "Produit ajouté avec succès!")
+      resetForm()
+      refetchProducts()
+    }
+  }, [isSuccess, success, editingProduct, refetchProducts])
 
   // Reset form
   const resetForm = () => {
     setProductName("")
     setProductDescription("")
     setProductPrice("")
+    setImageUrl("")
     setEditingProduct(null)
     setIsActive(true)
-  }
-
-  // Handle add product
-  const handleAddProduct = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError("")
     setSuccess("")
-
-    if (!address) {
-      setError("Veuillez connecter votre portefeuille")
-      return
-    }
-
-    if (!productName || !productDescription || !productPrice) {
-      setError("Veuillez remplir tous les champs")
-      return
-    }
-
-    try {
-      const parsedPrice = parseEther(productPrice)
-
-      await writeContract({
-        address: MARKETPLACE_ADDRESS as `0x${string}`,
-        abi: marketplaceABI,
-        functionName: "addProduct",
-        args: [productName, productDescription, parsedPrice],
-      })
-
-      setSuccess("Produit ajouté avec succès!")
-      resetForm()
-      refetchProducts()
-    } catch (err) {
-      console.error("Erreur lors de l'ajout du produit:", err)
-      setError(`Erreur: ${err instanceof Error ? err.message : String(err)}`)
-    }
+    setError("")
   }
 
   // Handle update product
@@ -117,23 +125,40 @@ export function MyProducts() {
     }
 
     if (!productName || !productDescription || !productPrice) {
-      setError("Veuillez remplir tous les champs")
+      setError("Veuillez remplir tous les champs obligatoires")
       return
     }
 
     try {
-      const parsedPrice = parseEther(productPrice)
+      // Mettre à jour les métadonnées
+      const metadata = JSON.stringify({
+        name: productName,
+        description: productDescription,
+        image: imageUrl || (editingProduct.parsedMetadata?.image || "https://via.placeholder.com/500"),
+      })
+
+      console.log("Tentative de mise à jour du produit:", {
+        id: editingProduct.id.toString(),
+        name: productName,
+        description: productDescription,
+        price: parseEther(productPrice),
+        active: isActive,
+        metadata
+      })
 
       await writeContract({
         address: MARKETPLACE_ADDRESS as `0x${string}`,
         abi: marketplaceABI,
         functionName: "updateProduct",
-        args: [editingProduct.id, productName, productDescription, parsedPrice, isActive],
+        args: [
+          editingProduct.id,
+          productName,
+          productDescription,
+          parseEther(productPrice),
+          isActive,
+          metadata
+        ],
       })
-
-      setSuccess("Produit mis à jour avec succès!")
-      resetForm()
-      refetchProducts()
     } catch (err) {
       console.error("Erreur lors de la mise à jour du produit:", err)
       setError(`Erreur: ${err instanceof Error ? err.message : String(err)}`)
@@ -146,6 +171,7 @@ export function MyProducts() {
     setProductName(product.name)
     setProductDescription(product.description)
     setProductPrice(formatEther(product.price))
+    setImageUrl(product.parsedMetadata?.image || "")
     setIsActive(product.active)
   }
 
@@ -169,84 +195,86 @@ export function MyProducts() {
           <CardDescription>Gérez vos produits sur le marketplace</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
-          <form onSubmit={editingProduct ? handleUpdateProduct : handleAddProduct} className="space-y-4">
-            <div className="space-y-4">
-              <div>
-                <Label htmlFor="productName">Nom du produit</Label>
-                <Input
-                  id="productName"
-                  value={productName}
-                  onChange={(e) => setProductName(e.target.value)}
-                  className="bg-background/50"
-                  placeholder="Ex: NFT Exclusif"
-                />
-              </div>
+          {editingProduct && (
+            <form onSubmit={handleUpdateProduct} className="space-y-4">
+              <div className="space-y-4">
+                <div>
+                  <Label htmlFor="productName">Nom du produit</Label>
+                  <Input
+                    id="productName"
+                    value={productName}
+                    onChange={(e) => setProductName(e.target.value)}
+                    className="bg-background/50"
+                    placeholder="Ex: NFT Exclusif"
+                  />
+                </div>
 
-              <div>
-                <Label htmlFor="productDescription">Description</Label>
-                <Textarea
-                  id="productDescription"
-                  value={productDescription}
-                  onChange={(e) => setProductDescription(e.target.value)}
-                  className="bg-background/50"
-                  placeholder="Description du produit..."
-                  rows={3}
-                />
-              </div>
+                <div>
+                  <Label htmlFor="productDescription">Description</Label>
+                  <Textarea
+                    id="productDescription"
+                    value={productDescription}
+                    onChange={(e) => setProductDescription(e.target.value)}
+                    className="bg-background/50"
+                    placeholder="Description du produit..."
+                    rows={3}
+                  />
+                </div>
 
-              <div>
-                <Label htmlFor="productPrice">Prix (TEST)</Label>
-                <Input
-                  id="productPrice"
-                  type="number"
-                  min="0.1"
-                  step="0.1"
-                  value={productPrice}
-                  onChange={(e) => setProductPrice(e.target.value)}
-                  className="bg-background/50"
-                  placeholder="Ex: 5"
-                />
-              </div>
+                <div>
+                  <Label htmlFor="productPrice">Prix (TEST)</Label>
+                  <Input
+                    id="productPrice"
+                    type="text"
+                    value={productPrice}
+                    onChange={(e) => setProductPrice(e.target.value)}
+                    className="bg-background/50"
+                    placeholder="Ex: 5"
+                  />
+                </div>
 
-              {editingProduct && (
+                <div>
+                  <Label htmlFor="imageUrl">URL de l'image (optionnel)</Label>
+                  <Input
+                    id="imageUrl"
+                    value={imageUrl}
+                    onChange={(e) => setImageUrl(e.target.value)}
+                    className="bg-background/50"
+                    placeholder="https://exemple.com/image.jpg"
+                  />
+                </div>
+
                 <div className="flex items-center space-x-2">
                   <Switch id="isActive" checked={isActive} onCheckedChange={setIsActive} />
                   <Label htmlFor="isActive">Produit actif</Label>
                 </div>
-              )}
-            </div>
+              </div>
 
-            <div className="flex space-x-2">
-              <Button
-                type="submit"
-                disabled={isPending || isConfirming}
-                className="bg-primary hover:bg-primary/90 text-primary-foreground"
-              >
-                {isPending || isConfirming ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                    {isPending ? "Confirmation..." : "Transaction..."}
-                  </>
-                ) : editingProduct ? (
-                  <>
-                    <Pencil className="h-4 w-4 mr-2" />
-                    Mettre à jour
-                  </>
-                ) : (
-                  <>
-                    <Plus className="h-4 w-4 mr-2" />
-                    Ajouter
-                  </>
-                )}
-              </Button>
+              <div className="flex space-x-2">
+                <Button
+                  type="submit"
+                  disabled={isPending || isConfirming}
+                  className="bg-primary hover:bg-primary/90 text-primary-foreground"
+                >
+                  {isPending || isConfirming ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      {isPending ? "Confirmation..." : "Transaction en cours..."}
+                    </>
+                  ) : (
+                    <>
+                      <Pencil className="h-4 w-4 mr-2" />
+                      Mettre à jour
+                    </>
+                  )}
+                </Button>
 
-              {editingProduct && (
                 <Button type="button" variant="outline" onClick={resetForm}>
                   Annuler
                 </Button>
-              )}
-            </div>
-          </form>
+              </div>
+            </form>
+          )}
 
           {error && (
             <Alert className="bg-destructive/10 border-destructive/30 text-foreground">
@@ -277,12 +305,21 @@ export function MyProducts() {
                   </div>
                 ))}
               </div>
-            ) : myProducts && (myProducts as Product[]).length > 0 ? (
+            ) : processedProducts && processedProducts.length > 0 ? (
               <div className="space-y-4">
-                {(myProducts as Product[]).map((product) => (
+                {processedProducts.map((product) => (
                   <div key={product.id.toString()} className="bg-secondary/50 p-4 rounded-lg border border-border">
                     <div className="flex justify-between items-start">
-                      <div>
+                      <div className="flex-1">
+                        {product.parsedMetadata?.image && (
+                          <div className="aspect-square w-full max-w-[120px] bg-background/50 rounded-md mb-3 overflow-hidden float-right ml-3">
+                            <img 
+                              src={product.parsedMetadata.image || "/placeholder.svg"} 
+                              alt={product.name}
+                              className="w-full h-full object-cover"
+                            />
+                          </div>
+                        )}
                         <div className="flex items-center">
                           <Tag className="h-4 w-4 text-primary mr-2" />
                           <h4 className="font-medium">{product.name}</h4>
@@ -294,6 +331,9 @@ export function MyProducts() {
                         </div>
                         <p className="text-sm text-muted-foreground mt-1">{product.description}</p>
                         <p className="text-sm font-medium mt-2">{formatEther(product.price)} TEST</p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          NFT ID: {product.tokenId.toString()}
+                        </p>
                       </div>
                       <Button variant="ghost" size="sm" onClick={() => setProductToEdit(product)}>
                         <Pencil className="h-4 w-4" />
