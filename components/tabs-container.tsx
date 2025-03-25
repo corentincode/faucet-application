@@ -10,7 +10,7 @@ export function TabsContainer() {
 
   return (
     <Tabs defaultValue="faucet" value={activeTab} onValueChange={setActiveTab} className="w-full">
-      <TabsList className="grid grid-cols-3 mb-6">
+      <TabsList className="grid grid-cols-1 mb-6">
         <TabsTrigger value="faucet" className="flex items-center">
           <Droplets className="h-4 w-4 mr-2" />
           Faucet

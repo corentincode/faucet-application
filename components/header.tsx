@@ -2,11 +2,12 @@
 
 import { useState, useEffect } from "react"
 import Link from "next/link"
+import Image from "next/image"
 import { usePathname, useRouter } from "next/navigation"
 import { useAccount, useDisconnect, useEnsName } from "wagmi"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
-import { Menu, Home, Store, ShoppingBag, Tag, Image, ChevronDown, LogOut, Copy, ExternalLink } from "lucide-react"
+import { Menu, Home, Store, ShoppingBag, Tag, ImageIcon, ChevronDown, LogOut, Copy, ExternalLink } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { motion } from "framer-motion"
 import {
@@ -45,7 +46,7 @@ const routes = [
   {
     name: "Créer un NFT",
     path: "/create-nft",
-    icon: <Image className="h-5 w-5" />,
+    icon: <ImageIcon className="h-5 w-5" />,
   },
 ]
 
@@ -114,10 +115,11 @@ export function Header() {
       >
         <div className="container mx-auto">
           <div className="flex h-16 items-center justify-between">
-            <div className="flex items-center gap-2 md:gap-8">
+            {/* Logo à gauche */}
+            <div className="flex items-center">
               <Sheet open={isOpen} onOpenChange={setIsOpen}>
                 <SheetTrigger asChild>
-                  <Button variant="ghost" size="icon" className="md:hidden">
+                  <Button variant="ghost" size="icon" className="md:hidden mr-2">
                     <Menu className="h-6 w-6" />
                     <span className="sr-only">Menu</span>
                   </Button>
@@ -125,7 +127,7 @@ export function Header() {
                 <SheetContent side="left" className="p-0">
                   <div className="p-6 bg-primary/5 border-b border-border">
                     <Link href="/" className="flex items-center gap-2 font-bold" onClick={() => setIsOpen(false)}>
-                      <span className="font-bold text-xl">NFT Marketplace</span>
+                      <Image src="/logo.png" alt="Logo" width={60} height={60} />
                     </Link>
                   </div>
                   <nav className="flex flex-col p-4">
@@ -177,11 +179,14 @@ export function Header() {
                 </SheetContent>
               </Sheet>
 
-              <Link href="/" className="flex items-center gap-2">
-                <span className="font-bold text-lg">NFT Marketplace</span>
+              <Link href="/" className="flex items-center">
+                <Image src="/logo.png" alt="Logo" width={48} height={48} className="h-12 w-auto" />
               </Link>
+            </div>
 
-              <nav className="hidden md:flex items-center gap-1">
+            {/* Navigation au centre */}
+            <div className="hidden md:flex flex-1 justify-center">
+              <nav className="flex items-center gap-1">
                 {routes.map((route) => {
                   const isActive = pathname === route.path
 
@@ -208,6 +213,7 @@ export function Header() {
               </nav>
             </div>
 
+            {/* Profil à droite */}
             <div className="flex items-center gap-4">
               {isConnected && address ? (
                 <DropdownMenu>

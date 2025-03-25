@@ -5,8 +5,7 @@ import { useAccount, usePublicClient, useWriteContract, useWaitForTransactionRec
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Skeleton } from "@/components/ui/skeleton"
-import { AlertCircle, RefreshCw, ShoppingBag, Plus, Tag, CheckCircle, Store } from "lucide-react"
+import { AlertCircle, RefreshCw, ShoppingBag, Plus, Tag, CheckCircle, Store, Loader2 } from "lucide-react"
 import { nftABI } from "@/lib/nft-abi"
 import { marketplaceABI } from "@/lib/marketplace-abi"
 import { NFT_ADDRESS, MARKETPLACE_ADDRESS } from "@/lib/constants"
@@ -16,6 +15,7 @@ import { useRouter } from "next/navigation"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { formatEther } from "viem"
 import { toast } from "react-toastify"
+import { motion } from "framer-motion"
 
 interface NFT {
   tokenId: bigint
@@ -53,7 +53,6 @@ export function MyNFTs() {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
-  const [logs, setLogs] = useState<string[]>([])
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [manualTokenId, setManualTokenId] = useState("")
   const [activeTab, setActiveTab] = useState("available")
@@ -63,18 +62,11 @@ export function MyNFTs() {
   const publicClient = usePublicClient()
   const router = useRouter()
 
-  // Fonction pour ajouter des logs
-  const addLog = (message: string) => {
-    console.log(message)
-    setLogs((prev) => [...prev, message])
-  }
-
   // Récupérer les produits du vendeur pour vérifier quels NFTs sont déjà en vente
   const fetchSellerProducts = async () => {
     if (!address || !publicClient) return { active: [], inactive: [] }
 
     try {
-      addLog("Récupération des produits du vendeur...")
       const products = await publicClient.readContract({
         address: MARKETPLACE_ADDRESS as `0x${string}`,
         abi: marketplaceABI,
@@ -83,7 +75,6 @@ export function MyNFTs() {
       })
 
       const allProducts = products as Product[]
-      addLog(`${allProducts.length} produits trouvés`)
 
       // Traiter les métadonnées des produits
       const processedProducts = allProducts.map((product) => {
@@ -108,7 +99,7 @@ export function MyNFTs() {
 
       return { active: activeProducts, inactive: inactiveProducts }
     } catch (err) {
-      addLog(`Erreur lors de la récupération des produits: ${err instanceof Error ? err.message : String(err)}`)
+      console.error("Erreur lors de la récupération des produits:", err)
       return { active: [], inactive: [] }
     }
   }
@@ -128,7 +119,6 @@ export function MyNFTs() {
 
       // Si l'utilisateur n'est pas le propriétaire, retourner null
       if ((owner as string).toLowerCase() !== address.toLowerCase()) {
-        addLog(`Le NFT #${tokenId.toString()} ne vous appartient pas`)
         return null
       }
 
@@ -140,24 +130,18 @@ export function MyNFTs() {
         args: [tokenId],
       })
 
-      addLog(
-        `URI du token ${tokenId}: ${typeof tokenURI === "string" ? tokenURI.substring(0, 50) + "..." : "Non disponible"}`,
-      )
-
       // Essayer de parser les métadonnées
       let parsedMetadata
       try {
         if (typeof tokenURI === "string") {
           if (tokenURI.startsWith("{")) {
             parsedMetadata = JSON.parse(tokenURI)
-            addLog(`Métadonnées parsées pour le token ${tokenId}`)
           } else if (tokenURI.startsWith("http")) {
-            addLog(`URI externe pour le token ${tokenId}, impossible de récupérer les métadonnées`)
             parsedMetadata = { name: `NFT #${tokenId}`, description: "Métadonnées externes", image: "" }
           }
         }
       } catch (e) {
-        addLog(`Erreur lors du parsing des métadonnées: ${e instanceof Error ? e.message : String(e)}`)
+        console.error("Erreur lors du parsing des métadonnées:", e)
       }
 
       return {
@@ -167,9 +151,7 @@ export function MyNFTs() {
         parsedMetadata,
       }
     } catch (err) {
-      addLog(
-        `Erreur lors de la récupération du NFT #${tokenId.toString()}: ${err instanceof Error ? err.message : String(err)}`,
-      )
+      console.error(`Erreur lors de la récupération du NFT #${tokenId.toString()}:`, err)
       return null
     }
   }
@@ -180,22 +162,22 @@ export function MyNFTs() {
 
     try {
       const tokenId = BigInt(manualTokenId)
-      addLog(`Tentative de récupération du NFT #${tokenId.toString()}...`)
 
       const nft = await fetchNFTById(tokenId)
       if (nft) {
         // Vérifier si ce NFT n'est pas déjà dans la liste
         if (!availableNFTs.some((existingNft) => existingNft.tokenId === tokenId)) {
           setAvailableNFTs((prev) => [...prev, nft])
-          addLog(`NFT #${tokenId.toString()} ajouté avec succès`)
+          toast.success(`NFT #${tokenId.toString()} ajouté avec succès`)
         } else {
-          addLog(`Le NFT #${tokenId.toString()} est déjà dans votre liste`)
+          toast.info(`Le NFT #${tokenId.toString()} est déjà dans votre liste`)
         }
       } else {
-        addLog(`Impossible d'ajouter le NFT #${tokenId.toString()}`)
+        toast.error(`Impossible d'ajouter le NFT #${tokenId.toString()}`)
       }
     } catch (err) {
-      addLog(`Erreur lors de l'ajout manuel du NFT: ${err instanceof Error ? err.message : String(err)}`)
+      console.error("Erreur lors de l'ajout manuel du NFT:", err)
+      toast.error("Erreur lors de l'ajout du NFT")
     } finally {
       setManualTokenId("")
     }
@@ -204,13 +186,10 @@ export function MyNFTs() {
   // Fonction pour récupérer les NFTs en utilisant les événements Transfer
   const fetchNFTsFromTransferEvents = async () => {
     if (!address || !publicClient) {
-      addLog("Adresse ou client public non disponible")
       return
     }
 
     try {
-      addLog("Recherche des événements Transfer pour trouver vos NFTs...")
-
       // Récupérer les événements Transfer où l'utilisateur est le destinataire
       const transferEvents = await publicClient.getLogs({
         address: NFT_ADDRESS as `0x${string}`,
@@ -229,8 +208,6 @@ export function MyNFTs() {
         fromBlock: "earliest",
         toBlock: "latest",
       })
-
-      addLog(`${transferEvents.length} événements Transfer trouvés où vous êtes le destinataire`)
 
       // Récupérer les événements Transfer où l'utilisateur est l'expéditeur
       const transferOutEvents = await publicClient.getLogs({
@@ -251,8 +228,6 @@ export function MyNFTs() {
         toBlock: "latest",
       })
 
-      addLog(`${transferOutEvents.length} événements Transfer trouvés où vous êtes l'expéditeur`)
-
       // Créer un ensemble de tokenIds reçus
       const receivedTokenIds = new Set(transferEvents.map((event) => BigInt(event.args.tokenId as bigint)))
 
@@ -261,8 +236,6 @@ export function MyNFTs() {
 
       // Déterminer les tokenIds actuellement détenus (reçus mais pas envoyés)
       const ownedTokenIds = [...receivedTokenIds].filter((id) => !sentTokenIds.has(id))
-
-      addLog(`${ownedTokenIds.length} NFTs potentiellement détenus identifiés`)
 
       // Récupérer les produits du vendeur pour vérifier quels NFTs sont déjà en vente
       const { active: activeProducts, inactive: inactiveProducts } = await fetchSellerProducts()
@@ -277,8 +250,6 @@ export function MyNFTs() {
           .map((product) => product.tokenId.toString()),
       )
 
-      addLog(`${listedTokenIds.size} NFTs déjà en vente sur le marketplace`)
-
       // Récupérer les détails de chaque NFT
       const fetchedNFTs: NFT[] = []
       for (const tokenId of ownedTokenIds) {
@@ -290,18 +261,14 @@ export function MyNFTs() {
           // N'ajouter que les NFTs qui ne sont pas en vente
           if (!nft.isListed) {
             fetchedNFTs.push(nft)
-          } else {
-            addLog(`NFT #${tokenId.toString()} est déjà en vente, il ne sera pas affiché dans l'onglet "Disponibles"`)
           }
         }
       }
 
-      addLog(`${fetchedNFTs.length} NFTs non listés récupérés avec succès`)
       setAvailableNFTs(fetchedNFTs)
     } catch (err) {
-      const errorMessage = `Erreur lors de la récupération des événements Transfer: ${err instanceof Error ? err.message : String(err)}`
-      addLog(errorMessage)
-      setError(errorMessage)
+      console.error("Erreur lors de la récupération des événements Transfer:", err)
+      setError("Erreur lors de la récupération de vos NFTs")
     }
   }
 
@@ -309,14 +276,12 @@ export function MyNFTs() {
   const fetchNFTs = async () => {
     setIsLoading(true)
     setError("")
-    addLog(`Adresse connectée: ${address}`)
 
     try {
       await fetchNFTsFromTransferEvents()
     } catch (err) {
-      const errorMessage = `Erreur lors de la récupération des NFTs: ${err instanceof Error ? err.message : String(err)}`
-      addLog(errorMessage)
-      setError(errorMessage)
+      console.error("Erreur lors de la récupération des NFTs:", err)
+      setError("Erreur lors de la récupération de vos NFTs")
     } finally {
       setIsLoading(false)
     }
@@ -325,7 +290,6 @@ export function MyNFTs() {
   // Effet pour récupérer les NFTs au chargement
   useEffect(() => {
     if (address && publicClient) {
-      addLog("Adresse et client public détectés, tentative de récupération des NFTs...")
       fetchNFTs()
     } else {
       setIsLoading(false)
@@ -335,16 +299,15 @@ export function MyNFTs() {
   // Fonction pour rafraîchir manuellement
   const handleRefresh = async () => {
     setIsRefreshing(true)
-    setLogs([])
     setSuccess("")
     setError("")
-    addLog("Rafraîchissement des données...")
 
     try {
       await fetchNFTs()
-      addLog("Données rafraîchies avec succès")
+      toast.success("Données rafraîchies avec succès")
     } catch (err) {
-      addLog(`Erreur lors du rafraîchissement: ${err instanceof Error ? err.message : String(err)}`)
+      console.error("Erreur lors du rafraîchissement:", err)
+      toast.error("Erreur lors du rafraîchissement des données")
     } finally {
       setIsRefreshing(false)
     }
@@ -352,8 +315,6 @@ export function MyNFTs() {
 
   // Fonction pour tester manuellement avec un nombre fixe de NFTs
   const testWithFixedNFTs = () => {
-    addLog("Test avec des NFTs fixes...")
-
     // NFTs disponibles
     const testAvailableNFTs: NFT[] = []
     for (let i = 1; i <= 3; i++) {
@@ -415,7 +376,7 @@ export function MyNFTs() {
     setListedNFTs(testListedNFTs)
     setSoldNFTs(testSoldNFTs)
     setIsLoading(false)
-    addLog("NFTs de test ajoutés avec succès")
+    toast.success("NFTs de test ajoutés avec succès")
   }
 
   // Hooks pour les transactions
@@ -465,8 +426,6 @@ export function MyNFTs() {
       })
 
       if ((approved as string).toLowerCase() !== MARKETPLACE_ADDRESS.toLowerCase()) {
-        addLog(`Le NFT #${nft.tokenId.toString()} n'est pas approuvé pour le marketplace. Approbation en cours...`)
-
         // Marquer comme en cours d'approbation
         setIsApproving(true)
         setApprovingTokenId(nft.tokenId)
@@ -482,8 +441,6 @@ export function MyNFTs() {
         // La redirection sera gérée dans l'effet useEffect après le succès de la transaction
       } else {
         // Si déjà approuvé, rediriger directement vers la page de mise en vente
-        addLog(`NFT #${nft.tokenId.toString()} déjà approuvé pour le marketplace.`)
-
         // Rediriger vers la page de mise en vente avec les paramètres du NFT
         const params = new URLSearchParams({
           tokenId: nft.tokenId.toString(),
@@ -495,9 +452,8 @@ export function MyNFTs() {
         router.push(`/add-product?${params.toString()}`)
       }
     } catch (err) {
-      const errorMessage = `Erreur lors de la préparation de la mise en vente: ${err instanceof Error ? err.message : String(err)}`
-      addLog(errorMessage)
-      setError(errorMessage)
+      console.error("Erreur lors de la préparation de la mise en vente:", err)
+      setError("Erreur lors de la préparation de la mise en vente")
       setIsApproving(false)
       setApprovingTokenId(null)
     }
@@ -514,273 +470,265 @@ export function MyNFTs() {
   }
 
   return (
-    <Card className="backdrop-blur-sm bg-secondary/30 border-border overflow-hidden">
-      <CardHeader className="flex flex-row items-center justify-between">
-        <div>
-          <CardTitle className="text-lg flex items-center">
-            <ShoppingBag className="h-5 w-5 mr-2" />
-            Mes NFTs
-          </CardTitle>
-          <CardDescription>Gérez tous vos NFTs</CardDescription>
-        </div>
-        <div className="flex space-x-2">
-          <Dialog>
-            <DialogTrigger asChild>
-              <Button variant="outline" size="sm" className="bg-secondary/50 border-border">
-                <Plus className="h-4 w-4 mr-1" />
-                Ajouter NFT
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Ajouter un NFT manuellement</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                <p className="text-sm text-muted-foreground">
-                  Si vous connaissez l'ID d'un NFT que vous possédez, vous pouvez l'ajouter manuellement ici.
-                </p>
-                <div className="flex space-x-2">
-                  <Input
-                    placeholder="ID du NFT (ex: 1)"
-                    value={manualTokenId}
-                    onChange={(e) => setManualTokenId(e.target.value)}
-                  />
-                  <Button onClick={handleAddManualNFT}>Ajouter</Button>
-                </div>
-              </div>
-            </DialogContent>
-          </Dialog>
-          <Button variant="outline" size="sm" onClick={testWithFixedNFTs} className="bg-secondary/50 border-border">
-            Test NFTs
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleRefresh}
-            disabled={isRefreshing}
-            className="bg-secondary/50 border-border"
-          >
-            <RefreshCw className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`} />
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {error && (
-          <Alert className="bg-destructive/10 border-destructive/30 text-foreground">
-            <AlertCircle className="h-4 w-4 text-destructive mr-2" />
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
-
-        {success && (
-          <Alert className="bg-green-500/10 border-green-500/30 text-foreground">
-            <CheckCircle className="h-4 w-4 text-green-500 mr-2" />
-            <AlertDescription>{success}</AlertDescription>
-          </Alert>
-        )}
-
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid grid-cols-3 mb-4">
-            <TabsTrigger value="available" className="flex items-center">
-              <ShoppingBag className="h-4 w-4 mr-2" />
-              <span>Disponibles</span>
-            </TabsTrigger>
-            <TabsTrigger value="listed" className="flex items-center">
-              <Tag className="h-4 w-4 mr-2" />
-              <span>En vente</span>
-            </TabsTrigger>
-            <TabsTrigger value="sold" className="flex items-center">
-              <Store className="h-4 w-4 mr-2" />
-              <span>Vendus</span>
-            </TabsTrigger>
-          </TabsList>
-
-          {/* Onglet NFTs disponibles */}
-          <TabsContent value="available" className="mt-0">
-            {isLoading ? (
-              <div className="space-y-2">
-                {[1, 2, 3].map((i) => (
-                  <div key={i} className="bg-secondary/50 p-4 rounded-lg">
-                    <Skeleton className="h-6 w-3/4 mb-2" />
-                    <Skeleton className="h-4 w-full mb-2" />
-                    <Skeleton className="h-4 w-1/4" />
-                  </div>
-                ))}
-              </div>
-            ) : availableNFTs.length > 0 ? (
-              <div className="space-y-4">
-                {availableNFTs.map((nft) => (
-                  <div key={nft.tokenId.toString()} className="bg-secondary/50 p-4 rounded-lg border border-border">
-                    <div className="flex items-start">
-                      <div className="flex-1">
-                        {nft.parsedMetadata?.image && (
-                          <div className="aspect-square w-full max-w-[120px] bg-background/50 rounded-md mb-3 overflow-hidden float-right ml-3">
-                            <img
-                              src={nft.parsedMetadata.image || "/placeholder.svg"}
-                              alt={nft.parsedMetadata.name || `NFT #${nft.tokenId.toString()}`}
-                              className="w-full h-full object-cover"
-                              onError={(e) => {
-                                e.currentTarget.src = "/placeholder.svg?height=500&width=500"
-                              }}
-                            />
-                          </div>
-                        )}
-                        <div className="flex items-center">
-                          <ShoppingBag className="h-4 w-4 text-primary mr-2" />
-                          <h4 className="font-medium">
-                            {nft.parsedMetadata?.name || `NFT #${nft.tokenId.toString()}`}
-                          </h4>
-                        </div>
-                        <p className="text-sm text-muted-foreground mt-1">
-                          {nft.parsedMetadata?.description || "Aucune description"}
-                        </p>
-                        <p className="text-xs text-muted-foreground mt-1">NFT ID: {nft.tokenId.toString()}</p>
-
-                        <Button
-                          onClick={() => handleListNFT(nft)}
-                          className="mt-3 bg-primary hover:bg-primary/90 text-primary-foreground"
-                          size="sm"
-                          disabled={isPending || isConfirming || (isApproving && approvingTokenId === nft.tokenId)}
-                        >
-                          {isPending || isConfirming || (isApproving && approvingTokenId === nft.tokenId) ? (
-                            <>
-                              <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
-                              Approbation...
-                            </>
-                          ) : (
-                            <>
-                              <Tag className="h-4 w-4 mr-1" />
-                              Mettre en vente
-                            </>
-                          )}
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-center text-muted-foreground py-4">
-                Vous n'avez pas de NFTs disponibles pour la mise en vente
-              </p>
-            )}
-          </TabsContent>
-
-          {/* Onglet NFTs en vente */}
-          <TabsContent value="listed" className="mt-0">
-            {isLoading ? (
-              <div className="space-y-2">
-                {[1, 2, 3].map((i) => (
-                  <div key={i} className="bg-secondary/50 p-4 rounded-lg">
-                    <Skeleton className="h-6 w-3/4 mb-2" />
-                    <Skeleton className="h-4 w-full mb-2" />
-                    <Skeleton className="h-4 w-1/4" />
-                  </div>
-                ))}
-              </div>
-            ) : listedNFTs.length > 0 ? (
-              <div className="space-y-4">
-                {listedNFTs.map((product) => (
-                  <div key={product.id.toString()} className="bg-secondary/50 p-4 rounded-lg border border-border">
-                    <div className="flex items-start">
-                      <div className="flex-1">
-                        {product.parsedMetadata?.image && (
-                          <div className="aspect-square w-full max-w-[120px] bg-background/50 rounded-md mb-3 overflow-hidden float-right ml-3">
-                            <img
-                              src={product.parsedMetadata.image || "/placeholder.svg"}
-                              alt={product.name}
-                              className="w-full h-full object-cover"
-                              onError={(e) => {
-                                e.currentTarget.src = "/placeholder.svg?height=500&width=500"
-                              }}
-                            />
-                          </div>
-                        )}
-                        <div className="flex items-center">
-                          <Tag className="h-4 w-4 text-primary mr-2" />
-                          <h4 className="font-medium">{product.name}</h4>
-                          <span className="ml-2 px-2 py-0.5 rounded-full text-xs bg-green-500/20 text-green-500">
-                            En vente
-                          </span>
-                        </div>
-                        <p className="text-sm text-muted-foreground mt-1">{product.description}</p>
-                        <p className="text-sm font-medium mt-1">{formatEther(product.price)} TEST</p>
-                        <p className="text-xs text-muted-foreground mt-1">NFT ID: {product.tokenId.toString()}</p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-center text-muted-foreground py-4">Vous n'avez pas de NFTs en vente actuellement</p>
-            )}
-          </TabsContent>
-
-          {/* Onglet NFTs vendus */}
-          <TabsContent value="sold" className="mt-0">
-            {isLoading ? (
-              <div className="space-y-2">
-                {[1, 2, 3].map((i) => (
-                  <div key={i} className="bg-secondary/50 p-4 rounded-lg">
-                    <Skeleton className="h-6 w-3/4 mb-2" />
-                    <Skeleton className="h-4 w-full mb-2" />
-                    <Skeleton className="h-4 w-1/4" />
-                  </div>
-                ))}
-              </div>
-            ) : soldNFTs.length > 0 ? (
-              <div className="space-y-4">
-                {soldNFTs.map((product) => (
-                  <div key={product.id.toString()} className="bg-secondary/50 p-4 rounded-lg border border-border">
-                    <div className="flex items-start">
-                      <div className="flex-1">
-                        {product.parsedMetadata?.image && (
-                          <div className="aspect-square w-full max-w-[120px] bg-background/50 rounded-md mb-3 overflow-hidden float-right ml-3">
-                            <img
-                              src={product.parsedMetadata.image || "/placeholder.svg"}
-                              alt={product.name}
-                              className="w-full h-full object-cover"
-                              onError={(e) => {
-                                e.currentTarget.src = "/placeholder.svg?height=500&width=500"
-                              }}
-                            />
-                          </div>
-                        )}
-                        <div className="flex items-center">
-                          <Store className="h-4 w-4 text-primary mr-2" />
-                          <h4 className="font-medium">{product.name}</h4>
-                          <span className="ml-2 px-2 py-0.5 rounded-full text-xs bg-destructive/20 text-destructive">
-                            Vendu
-                          </span>
-                        </div>
-                        <p className="text-sm text-muted-foreground mt-1">{product.description}</p>
-                        <p className="text-sm font-medium mt-1">{formatEther(product.price)} TEST</p>
-                        <p className="text-xs text-muted-foreground mt-1">NFT ID: {product.tokenId.toString()}</p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-center text-muted-foreground py-4">Vous n'avez pas encore vendu de NFTs</p>
-            )}
-          </TabsContent>
-        </Tabs>
-
-        {logs.length > 0 && (
-          <div className="mt-4 p-4 bg-background/50 rounded-lg border border-border">
-            <h3 className="font-medium mb-2">Logs de débogage</h3>
-            <div className="text-xs font-mono bg-background/70 p-2 rounded max-h-60 overflow-y-auto">
-              {logs.map((log, index) => (
-                <div key={index} className="mb-1">
-                  {log}
-                </div>
-              ))}
-            </div>
+    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
+      <Card className="backdrop-blur-sm bg-secondary/30 border-border overflow-hidden">
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div>
+            <CardTitle className="text-lg flex items-center">
+              <ShoppingBag className="h-5 w-5 mr-2" />
+              Mes NFTs
+            </CardTitle>
+            <CardDescription>Gérez tous vos NFTs</CardDescription>
           </div>
-        )}
-      </CardContent>
-    </Card>
+          <div className="flex space-x-2">
+            <Dialog>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="sm" className="bg-secondary/50 border-border">
+                  <Plus className="h-4 w-4 mr-1" />
+                  Ajouter NFT
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Ajouter un NFT manuellement</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <p className="text-sm text-muted-foreground">
+                    Si vous connaissez l'ID d'un NFT que vous possédez, vous pouvez l'ajouter manuellement ici.
+                  </p>
+                  <div className="flex space-x-2">
+                    <Input
+                      placeholder="ID du NFT (ex: 1)"
+                      value={manualTokenId}
+                      onChange={(e) => setManualTokenId(e.target.value)}
+                    />
+                    <Button onClick={handleAddManualNFT}>Ajouter</Button>
+                  </div>
+                </div>
+              </DialogContent>
+            </Dialog>
+            <Button variant="outline" size="sm" onClick={testWithFixedNFTs} className="bg-secondary/50 border-border">
+              Test NFTs
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              className="bg-secondary/50 border-border"
+            >
+              <RefreshCw className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`} />
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {error && (
+            <Alert className="bg-destructive/10 border-destructive/30 text-foreground">
+              <AlertCircle className="h-4 w-4 text-destructive mr-2" />
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+
+          {success && (
+            <Alert className="bg-green-500/10 border-green-500/30 text-foreground">
+              <CheckCircle className="h-4 w-4 text-green-500 mr-2" />
+              <AlertDescription>{success}</AlertDescription>
+            </Alert>
+          )}
+
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+            <TabsList className="grid grid-cols-3 mb-4">
+              <TabsTrigger value="available" className="flex items-center">
+                <ShoppingBag className="h-4 w-4 mr-2" />
+                <span>Disponibles</span>
+              </TabsTrigger>
+              <TabsTrigger value="listed" className="flex items-center">
+                <Tag className="h-4 w-4 mr-2" />
+                <span>En vente</span>
+              </TabsTrigger>
+              <TabsTrigger value="sold" className="flex items-center">
+                <Store className="h-4 w-4 mr-2" />
+                <span>Vendus</span>
+              </TabsTrigger>
+            </TabsList>
+
+            {/* Onglet NFTs disponibles */}
+            <TabsContent value="available" className="mt-0">
+              {isLoading ? (
+                <div className="flex flex-col items-center justify-center py-12">
+                  <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
+                  <p className="text-muted-foreground">Chargement de vos NFTs...</p>
+                </div>
+              ) : availableNFTs.length > 0 ? (
+                <div className="space-y-4">
+                  {availableNFTs.map((nft) => (
+                    <div key={nft.tokenId.toString()} className="bg-secondary/50 p-4 rounded-lg border border-border">
+                      <div className="flex items-start">
+                        <div className="flex-1">
+                          {nft.parsedMetadata?.image && (
+                            <div className="aspect-square w-full max-w-[120px] bg-background/50 rounded-md mb-3 overflow-hidden float-right ml-3">
+                              <img
+                                src={nft.parsedMetadata.image || "/placeholder.svg"}
+                                alt={nft.parsedMetadata.name || `NFT #${nft.tokenId.toString()}`}
+                                className="w-full h-full object-cover"
+                                onError={(e) => {
+                                  e.currentTarget.src = "/placeholder.svg?height=500&width=500"
+                                }}
+                              />
+                            </div>
+                          )}
+                          <div className="flex items-center">
+                            <ShoppingBag className="h-4 w-4 text-primary mr-2" />
+                            <h4 className="font-medium">
+                              {nft.parsedMetadata?.name || `NFT #${nft.tokenId.toString()}`}
+                            </h4>
+                          </div>
+                          <p className="text-sm text-muted-foreground mt-1">
+                            {nft.parsedMetadata?.description || "Aucune description"}
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-1">NFT ID: {nft.tokenId.toString()}</p>
+
+                          <Button
+                            onClick={() => handleListNFT(nft)}
+                            className="mt-3 bg-primary hover:bg-primary/90 text-primary-foreground"
+                            size="sm"
+                            disabled={isPending || isConfirming || (isApproving && approvingTokenId === nft.tokenId)}
+                          >
+                            {isPending || isConfirming || (isApproving && approvingTokenId === nft.tokenId) ? (
+                              <>
+                                <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
+                                Approbation...
+                              </>
+                            ) : (
+                              <>
+                                <Tag className="h-4 w-4 mr-1" />
+                                Mettre en vente
+                              </>
+                            )}
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-12 bg-secondary/20 rounded-lg border border-border/40">
+                  <ShoppingBag className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                  <h3 className="text-xl font-medium mb-2">Aucun NFT disponible</h3>
+                  <p className="text-muted-foreground max-w-md mx-auto">
+                    Vous n'avez pas de NFTs disponibles pour la mise en vente. Créez un nouveau NFT ou ajoutez-en un
+                    manuellement.
+                  </p>
+                </div>
+              )}
+            </TabsContent>
+
+            {/* Onglet NFTs en vente */}
+            <TabsContent value="listed" className="mt-0">
+              {isLoading ? (
+                <div className="flex flex-col items-center justify-center py-12">
+                  <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
+                  <p className="text-muted-foreground">Chargement de vos NFTs en vente...</p>
+                </div>
+              ) : listedNFTs.length > 0 ? (
+                <div className="space-y-4">
+                  {listedNFTs.map((product) => (
+                    <div key={product.id.toString()} className="bg-secondary/50 p-4 rounded-lg border border-border">
+                      <div className="flex items-start">
+                        <div className="flex-1">
+                          {product.parsedMetadata?.image && (
+                            <div className="aspect-square w-full max-w-[120px] bg-background/50 rounded-md mb-3 overflow-hidden float-right ml-3">
+                              <img
+                                src={product.parsedMetadata.image || "/placeholder.svg"}
+                                alt={product.name}
+                                className="w-full h-full object-cover"
+                                onError={(e) => {
+                                  e.currentTarget.src = "/placeholder.svg?height=500&width=500"
+                                }}
+                              />
+                            </div>
+                          )}
+                          <div className="flex items-center">
+                            <Tag className="h-4 w-4 text-primary mr-2" />
+                            <h4 className="font-medium">{product.name}</h4>
+                            <span className="ml-2 px-2 py-0.5 rounded-full text-xs bg-green-500/20 text-green-500">
+                              En vente
+                            </span>
+                          </div>
+                          <p className="text-sm text-muted-foreground mt-1">{product.description}</p>
+                          <p className="text-sm font-medium mt-1">{formatEther(product.price)} TEST</p>
+                          <p className="text-xs text-muted-foreground mt-1">NFT ID: {product.tokenId.toString()}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-12 bg-secondary/20 rounded-lg border border-border/40">
+                  <Tag className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                  <h3 className="text-xl font-medium mb-2">Aucun NFT en vente</h3>
+                  <p className="text-muted-foreground max-w-md mx-auto">
+                    Vous n'avez pas de NFTs en vente actuellement. Mettez vos NFTs disponibles en vente sur le
+                    marketplace.
+                  </p>
+                </div>
+              )}
+            </TabsContent>
+
+            {/* Onglet NFTs vendus */}
+            <TabsContent value="sold" className="mt-0">
+              {isLoading ? (
+                <div className="flex flex-col items-center justify-center py-12">
+                  <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
+                  <p className="text-muted-foreground">Chargement de vos NFTs vendus...</p>
+                </div>
+              ) : soldNFTs.length > 0 ? (
+                <div className="space-y-4">
+                  {soldNFTs.map((product) => (
+                    <div key={product.id.toString()} className="bg-secondary/50 p-4 rounded-lg border border-border">
+                      <div className="flex items-start">
+                        <div className="flex-1">
+                          {product.parsedMetadata?.image && (
+                            <div className="aspect-square w-full max-w-[120px] bg-background/50 rounded-md mb-3 overflow-hidden float-right ml-3">
+                              <img
+                                src={product.parsedMetadata.image || "/placeholder.svg"}
+                                alt={product.name}
+                                className="w-full h-full object-cover"
+                                onError={(e) => {
+                                  e.currentTarget.src = "/placeholder.svg?height=500&width=500"
+                                }}
+                              />
+                            </div>
+                          )}
+                          <div className="flex items-center">
+                            <Store className="h-4 w-4 text-primary mr-2" />
+                            <h4 className="font-medium">{product.name}</h4>
+                            <span className="ml-2 px-2 py-0.5 rounded-full text-xs bg-destructive/20 text-destructive">
+                              Vendu
+                            </span>
+                          </div>
+                          <p className="text-sm text-muted-foreground mt-1">{product.description}</p>
+                          <p className="text-sm font-medium mt-1">{formatEther(product.price)} TEST</p>
+                          <p className="text-xs text-muted-foreground mt-1">NFT ID: {product.tokenId.toString()}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-12 bg-secondary/20 rounded-lg border border-border/40">
+                  <Store className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                  <h3 className="text-xl font-medium mb-2">Aucun NFT vendu</h3>
+                  <p className="text-muted-foreground max-w-md mx-auto">
+                    Vous n'avez pas encore vendu de NFTs. Les NFTs que vous vendez apparaîtront ici.
+                  </p>
+                </div>
+              )}
+            </TabsContent>
+          </Tabs>
+        </CardContent>
+      </Card>
+    </motion.div>
   )
 }
 
