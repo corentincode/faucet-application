@@ -2,21 +2,29 @@
 
 import { useState, useEffect } from "react"
 import { ConnectButton } from "@/components/connect-button"
-import { FaucetForm } from "@/components/faucet-form"
 import { TokenInfo } from "@/components/token-info"
+import { AdminPanel } from "@/components/admin-panel"
+import { MarketplaceAdmin } from "@/components/marketplace-admin"
+import { TabsContainer } from "@/components/tabs-container"
 import { motion } from "framer-motion"
-import { Sparkles } from "lucide-react"
+import { Sparkles } from 'lucide-react'
 import { NetworkCheck } from "@/components/network-check"
+import { useAccount } from "wagmi"
+import { useIsContractOwner } from "@/lib/contract-utils"
 
 export default function Home() {
   const [isConnected, setIsConnected] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
+  const { address } = useAccount()
+  const { isOwner } = useIsContractOwner(address as `0x${string}` | undefined)
 
   // Listen for balance update events
   useEffect(() => {
     const handleBalanceUpdate = () => {
       // Force refresh the TokenInfo component
-      setRefreshKey((prev) => prev + 1)
+      setTimeout(() => {
+        setRefreshKey((prev) => prev + 1)
+      }, 0)
     }
 
     window.addEventListener("balanceUpdate", handleBalanceUpdate)
@@ -111,7 +119,15 @@ export default function Home() {
                   className="space-y-6"
                 >
                   <TokenInfo key={refreshKey} />
-                  <FaucetForm />
+                  <TabsContainer />
+
+                  {/* Afficher les panneaux d'administration uniquement pour le propriétaire */}
+                  {isOwner && (
+                    <>
+                      <AdminPanel />
+                      <MarketplaceAdmin />
+                    </>
+                  )}
                 </motion.div>
               )}
             </div>
@@ -125,4 +141,3 @@ export default function Home() {
     </main>
   )
 }
-
