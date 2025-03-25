@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react"
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { useAccount, useDisconnect, useEnsName } from "wagmi"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
@@ -54,6 +54,7 @@ export function Header() {
   const [mounted, setMounted] = useState(false)
   const [scrolled, setScrolled] = useState(false)
   const pathname = usePathname()
+  const router = useRouter()
   const { address, isConnected } = useAccount()
   const { data: ensName } = useEnsName({ address })
   const { disconnect } = useDisconnect()
@@ -95,6 +96,12 @@ export function Header() {
     }
   }
 
+  // Déconnecter et rediriger vers la page d'accueil
+  const handleDisconnect = () => {
+    disconnect()
+    router.push("/")
+  }
+
   if (!mounted) return null
 
   return (
@@ -118,7 +125,6 @@ export function Header() {
                 <SheetContent side="left" className="p-0">
                   <div className="p-6 bg-primary/5 border-b border-border">
                     <Link href="/" className="flex items-center gap-2 font-bold" onClick={() => setIsOpen(false)}>
-                      <Store className="h-6 w-6 text-primary" />
                       <span className="font-bold text-xl">NFT Marketplace</span>
                     </Link>
                   </div>
@@ -159,7 +165,7 @@ export function Header() {
                         variant="ghost"
                         className="w-full mt-2 text-destructive/80 hover:text-destructive hover:bg-destructive/10"
                         onClick={() => {
-                          disconnect()
+                          handleDisconnect()
                           setIsOpen(false)
                         }}
                       >
@@ -172,8 +178,7 @@ export function Header() {
               </Sheet>
 
               <Link href="/" className="flex items-center gap-2">
-                <Store className="h-6 w-6 text-primary" />
-                <span className="font-bold text-lg hidden sm:inline-block">NFT Marketplace</span>
+                <span className="font-bold text-lg">NFT Marketplace</span>
               </Link>
 
               <nav className="hidden md:flex items-center gap-1">
@@ -231,7 +236,7 @@ export function Header() {
                       Voir sur Etherscan
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={() => disconnect()} className="text-destructive focus:text-destructive">
+                    <DropdownMenuItem onClick={handleDisconnect} className="text-destructive focus:text-destructive">
                       <LogOut className="h-4 w-4 mr-2" />
                       Déconnecter
                     </DropdownMenuItem>

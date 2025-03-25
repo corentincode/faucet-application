@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { useAccount, usePublicClient, useWriteContract } from "wagmi"
+import { useAccount, usePublicClient, useWriteContract, useWaitForTransactionReceipt } from "wagmi"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription } from "@/components/ui/alert"
@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { useRouter } from "next/navigation"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { formatEther } from "viem"
+import { toast } from "react-toastify"
 
 interface NFT {
   tokenId: bigint
@@ -56,6 +57,8 @@ export function MyNFTs() {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [manualTokenId, setManualTokenId] = useState("")
   const [activeTab, setActiveTab] = useState("available")
+  const [isApproving, setIsApproving] = useState(false)
+  const [approvingTokenId, setApprovingTokenId] = useState<bigint | null>(null)
   const { address, isConnected } = useAccount()
   const publicClient = usePublicClient()
   const router = useRouter()
@@ -415,9 +418,42 @@ export function MyNFTs() {
     addLog("NFTs de test ajoutés avec succès")
   }
 
+  // Hooks pour les transactions
+  const { writeContract, isPending, data: txHash } = useWriteContract()
+  const { isSuccess, isLoading: isConfirming } = useWaitForTransactionReceipt({
+    hash: txHash,
+  })
+
+  // Effet pour gérer le succès de l'approbation
+  useEffect(() => {
+    if (isSuccess && approvingTokenId) {
+      toast.success(`NFT #${approvingTokenId.toString()} approuvé pour le marketplace!`)
+      setSuccess(`NFT #${approvingTokenId.toString()} approuvé pour le marketplace!`)
+
+      // Rediriger vers la page de mise en vente avec les paramètres du NFT
+      const nft = availableNFTs.find((n) => n.tokenId === approvingTokenId)
+      if (nft) {
+        const params = new URLSearchParams({
+          tokenId: nft.tokenId.toString(),
+          name: nft.parsedMetadata?.name || `NFT #${nft.tokenId.toString()}`,
+          description: nft.parsedMetadata?.description || "",
+          image: nft.parsedMetadata?.image || "",
+        })
+
+        router.push(`/add-product?${params.toString()}`)
+      }
+
+      setApprovingTokenId(null)
+      setIsApproving(false)
+    }
+  }, [isSuccess, approvingTokenId, availableNFTs, router])
+
   // Fonction pour préparer la mise en vente d'un NFT
   const handleListNFT = async (nft: NFT) => {
     if (!address) return
+
+    setError("")
+    setSuccess("")
 
     try {
       // Vérifier si le NFT est approuvé pour le marketplace
@@ -431,31 +467,39 @@ export function MyNFTs() {
       if ((approved as string).toLowerCase() !== MARKETPLACE_ADDRESS.toLowerCase()) {
         addLog(`Le NFT #${nft.tokenId.toString()} n'est pas approuvé pour le marketplace. Approbation en cours...`)
 
+        // Marquer comme en cours d'approbation
+        setIsApproving(true)
+        setApprovingTokenId(nft.tokenId)
+
         // Approuver le NFT pour le marketplace
-        const { writeContract } = useWriteContract.prepare({
+        await writeContract({
           address: NFT_ADDRESS as `0x${string}`,
           abi: nftABI,
           functionName: "approve",
           args: [MARKETPLACE_ADDRESS as `0x${string}`, nft.tokenId],
         })
 
-        await writeContract()
-        addLog(`NFT #${nft.tokenId.toString()} approuvé pour le marketplace.`)
+        // La redirection sera gérée dans l'effet useEffect après le succès de la transaction
+      } else {
+        // Si déjà approuvé, rediriger directement vers la page de mise en vente
+        addLog(`NFT #${nft.tokenId.toString()} déjà approuvé pour le marketplace.`)
+
+        // Rediriger vers la page de mise en vente avec les paramètres du NFT
+        const params = new URLSearchParams({
+          tokenId: nft.tokenId.toString(),
+          name: nft.parsedMetadata?.name || `NFT #${nft.tokenId.toString()}`,
+          description: nft.parsedMetadata?.description || "",
+          image: nft.parsedMetadata?.image || "",
+        })
+
+        router.push(`/add-product?${params.toString()}`)
       }
-
-      // Rediriger vers la page de mise en vente avec les paramètres du NFT
-      const params = new URLSearchParams({
-        tokenId: nft.tokenId.toString(),
-        name: nft.parsedMetadata?.name || `NFT #${nft.tokenId.toString()}`,
-        description: nft.parsedMetadata?.description || "",
-        image: nft.parsedMetadata?.image || "",
-      })
-
-      router.push(`/add-product?${params.toString()}`)
     } catch (err) {
       const errorMessage = `Erreur lors de la préparation de la mise en vente: ${err instanceof Error ? err.message : String(err)}`
       addLog(errorMessage)
       setError(errorMessage)
+      setIsApproving(false)
+      setApprovingTokenId(null)
     }
   }
 
@@ -596,9 +640,19 @@ export function MyNFTs() {
                           onClick={() => handleListNFT(nft)}
                           className="mt-3 bg-primary hover:bg-primary/90 text-primary-foreground"
                           size="sm"
+                          disabled={isPending || isConfirming || (isApproving && approvingTokenId === nft.tokenId)}
                         >
-                          <Tag className="h-4 w-4 mr-1" />
-                          Mettre en vente
+                          {isPending || isConfirming || (isApproving && approvingTokenId === nft.tokenId) ? (
+                            <>
+                              <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
+                              Approbation...
+                            </>
+                          ) : (
+                            <>
+                              <Tag className="h-4 w-4 mr-1" />
+                              Mettre en vente
+                            </>
+                          )}
                         </Button>
                       </div>
                     </div>
