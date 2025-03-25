@@ -12,6 +12,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { AlertCircle, Loader2, CheckCircle, Image } from "lucide-react"
 import { nftABI } from "@/lib/nft-abi"
 import { NFT_ADDRESS, MARKETPLACE_ADDRESS } from "@/lib/constants"
+import { parseAbiItem } from "viem"
 
 export function CreateNFT() {
   const [name, setName] = useState("")
@@ -23,6 +24,7 @@ export function CreateNFT() {
   const [isApproved, setIsApproved] = useState(false)
   const [isAutoApproving, setIsAutoApproving] = useState(true)
   const [logs, setLogs] = useState<string[]>([])
+  const [manualTokenIdInput, setManualTokenIdInput] = useState("")
   const { address, isConnected } = useAccount()
 
   // Fonction pour ajouter des logs
@@ -36,7 +38,11 @@ export function CreateNFT() {
   const { writeContract: approveNFT, isPending: isApproving, data: approveTxHash } = useWriteContract()
 
   // Attendre la confirmation des transactions
-  const { isSuccess: isCreateSuccess, isLoading: isCreateConfirming } = useWaitForTransactionReceipt({
+  const {
+    isSuccess: isCreateSuccess,
+    isLoading: isCreateConfirming,
+    data: createReceipt,
+  } = useWaitForTransactionReceipt({
     hash: createTxHash,
   })
 
@@ -95,6 +101,7 @@ export function CreateNFT() {
 
       addLog(`Création du NFT avec les métadonnées: ${metadata}`)
       addLog(`Adresse du contrat NFT: ${NFT_ADDRESS}`)
+      addLog(`Votre adresse connectée: ${address}`)
 
       await createNFT({
         address: NFT_ADDRESS as `0x${string}`,
@@ -108,30 +115,77 @@ export function CreateNFT() {
     }
   }
 
-  // Effet pour gérer la création réussie du NFT
+  // Effet pour gérer la création réussie du NFT et extraire l'ID du token
   useEffect(() => {
-    if (isCreateSuccess && createTxHash) {
+    if (isCreateSuccess && createTxHash && createReceipt) {
       addLog(`NFT créé avec succès! Hash de transaction: ${createTxHash}`)
 
-      // Dans une application réelle, vous devriez récupérer le tokenId à partir des logs de la transaction
-      // Pour cet exemple, nous utilisons un ID fixe pour les tests
-      const newTokenId = BigInt(1) // Remplacez par la logique pour obtenir le vrai tokenId
-      setTokenId(newTokenId)
-      setSuccess(`NFT créé avec succès! ID: ${newTokenId.toString()}`)
+      try {
+        // Essayer de trouver l'événement Transfer dans les logs
+        const transferEventSignature = "Transfer(address,address,uint256)"
+        const transferEventTopic = parseAbiItem(transferEventSignature).selector
 
-      // Vérifier le propriétaire et l'approbation
-      setTimeout(() => {
-        refetchOwner()
-        refetchApproval()
-      }, 2000)
+        // Chercher l'événement Transfer dans les logs
+        const transferLog = createReceipt.logs.find((log) => log.topics[0] === transferEventTopic)
+
+        if (transferLog && transferLog.topics.length >= 4) {
+          // Le tokenId est généralement le 3ème sujet (index 3)
+          const tokenIdHex = transferLog.topics[3]
+          const newTokenId = BigInt(tokenIdHex)
+
+          addLog(`ID du token extrait des logs: ${newTokenId.toString()}`)
+          setTokenId(newTokenId)
+          setSuccess(`NFT créé avec succès! ID: ${newTokenId.toString()}`)
+
+          // Vérifier le propriétaire et l'approbation
+          setTimeout(() => {
+            refetchOwner()
+            refetchApproval()
+          }, 2000)
+          return
+        }
+
+        // Si nous ne trouvons pas l'événement Transfer, essayons de regarder les données de retour
+        if (createReceipt.logs.length > 0) {
+          // Essayer de déduire l'ID à partir du dernier log (souvent l'événement Transfer)
+          const lastLog = createReceipt.logs[createReceipt.logs.length - 1]
+          if (lastLog.data && lastLog.data !== "0x") {
+            try {
+              // Essayer de parser les données comme un uint256
+              const newTokenId = BigInt(lastLog.data)
+              addLog(`ID du token déduit des données: ${newTokenId.toString()}`)
+              setTokenId(newTokenId)
+              setSuccess(`NFT créé avec succès! ID: ${newTokenId.toString()}`)
+
+              // Vérifier le propriétaire et l'approbation
+              setTimeout(() => {
+                refetchOwner()
+                refetchApproval()
+              }, 2000)
+              return
+            } catch (e) {
+              console.error("Erreur lors du parsing des données:", e)
+            }
+          }
+        }
+
+        // Si tout échoue, demander à l'utilisateur d'entrer l'ID manuellement
+        addLog("Impossible de déterminer automatiquement l'ID du NFT créé. Veuillez entrer l'ID manuellement.")
+        setSuccess("NFT créé avec succès! Veuillez entrer l'ID du token ci-dessous.")
+      } catch (err) {
+        console.error("Erreur lors de l'extraction de l'ID du token:", err)
+        addLog(`Erreur lors de l'extraction de l'ID: ${err instanceof Error ? err.message : String(err)}`)
+        setSuccess("NFT créé avec succès! Veuillez entrer l'ID du token ci-dessous.")
+      }
     }
-  }, [isCreateSuccess, createTxHash, refetchOwner, refetchApproval])
+  }, [isCreateSuccess, createTxHash, createReceipt, refetchOwner, refetchApproval])
 
   // Effet pour vérifier le propriétaire
   useEffect(() => {
     if (ownerData && tokenId) {
       const owner = ownerData as `0x${string}`
       addLog(`Propriétaire du NFT #${tokenId.toString()}: ${owner}`)
+      addLog(`Votre adresse connectée: ${address}`)
 
       if (owner.toLowerCase() === address?.toLowerCase()) {
         addLog("Vous êtes bien le propriétaire de ce NFT")
@@ -152,7 +206,13 @@ export function CreateNFT() {
         }
       } else {
         addLog(`Attention: Vous n'êtes pas le propriétaire de ce NFT`)
+        addLog(`Propriétaire: ${owner}`)
+        addLog(`Votre adresse: ${address}`)
         setError(`Vous n'êtes pas le propriétaire de ce NFT. Propriétaire: ${owner}`)
+
+        // Si l'ID extrait était incorrect, permettre à l'utilisateur d'entrer l'ID manuellement
+        setTokenId(null)
+        addLog("L'ID extrait semble incorrect. Veuillez entrer manuellement l'ID correct.")
       }
     }
   }, [ownerData, approvedAddress, address, tokenId, isAutoApproving])
@@ -208,6 +268,25 @@ export function CreateNFT() {
     }
   }, [approvedAddress, tokenId])
 
+  // Fonction pour entrer manuellement l'ID du token
+  const handleManualTokenId = () => {
+    try {
+      if (!manualTokenIdInput) return
+
+      const id = BigInt(manualTokenIdInput)
+      setTokenId(id)
+      addLog(`ID du token défini manuellement: ${id.toString()}`)
+
+      // Vérifier le propriétaire et l'approbation
+      setTimeout(() => {
+        refetchOwner()
+        refetchApproval()
+      }, 500)
+    } catch (err) {
+      setError(`Erreur: Veuillez entrer un ID de token valide`)
+    }
+  }
+
   return (
     <Card className="backdrop-blur-sm bg-secondary/30 border-border overflow-hidden">
       <CardHeader>
@@ -262,6 +341,28 @@ export function CreateNFT() {
               </>
             )}
           </Button>
+
+          {isCreateSuccess && !tokenId && (
+            <div className="mt-4">
+              <p className="text-sm mb-2">Entrez manuellement l'ID du token créé:</p>
+              <div className="flex space-x-2">
+                <Input
+                  type="number"
+                  placeholder="ID du token (ex: 2)"
+                  value={manualTokenIdInput}
+                  onChange={(e) => setManualTokenIdInput(e.target.value)}
+                  className="bg-background/50"
+                />
+                <Button
+                  type="button"
+                  onClick={handleManualTokenId}
+                  className="bg-secondary hover:bg-secondary/90 text-secondary-foreground"
+                >
+                  Vérifier
+                </Button>
+              </div>
+            </div>
+          )}
 
           {tokenId && !isApproved && (
             <Button

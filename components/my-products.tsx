@@ -4,7 +4,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import type React from "react"
 import { useState, useEffect } from "react"
-import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from "wagmi"
+import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt, readContract } from "wagmi"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -106,50 +106,48 @@ export function MyProducts() {
 
       try {
         // Créer un tableau pour stocker les requêtes de tokenOfOwnerByIndex
-        const tokenIndexQueries = []
-        for (let i = 0; i < balance; i++) {
-          tokenIndexQueries.push({
-            address: NFT_ADDRESS as `0x${string}`,
-            abi: nftABI,
-            functionName: "tokenOfOwnerByIndex",
-            args: [address, BigInt(i)],
-          })
-        }
-
-        // Exécuter toutes les requêtes en parallèle
-        const tokenIds = await Promise.all(tokenIndexQueries.map((query) => useReadContract.fetch(query)))
-
-        // Créer un tableau pour stocker les requêtes de tokenURI
-        const tokenURIQueries = tokenIds.map((tokenId) => ({
+        const nfts = []
+        const nftContract = {
           address: NFT_ADDRESS as `0x${string}`,
           abi: nftABI,
-          functionName: "tokenURI",
-          args: [tokenId],
-        }))
+        }
 
-        // Exécuter toutes les requêtes en parallèle
-        const tokenURIs = await Promise.all(tokenURIQueries.map((query) => useReadContract.fetch(query)))
-
-        // Combiner les résultats
-        const nfts = tokenIds.map((tokenId, index) => {
-          const tokenURI = tokenURIs[index] as string
-          let parsedMetadata
-
+        // Récupérer chaque token ID et son URI
+        for (let i = 0; i < balance; i++) {
           try {
-            // Si l'URI est un JSON, on essaie de le parser
-            if (tokenURI.startsWith("{")) {
-              parsedMetadata = JSON.parse(tokenURI)
-            }
-          } catch (e) {
-            console.error("Erreur lors du parsing des métadonnées:", e)
-          }
+            // Récupérer l'ID du token
+            const tokenId = await readContract({
+              ...nftContract,
+              functionName: "tokenOfOwnerByIndex",
+              args: [address, BigInt(i)],
+            })
 
-          return {
-            tokenId: tokenId as bigint,
-            tokenURI,
-            parsedMetadata,
+            // Récupérer l'URI du token
+            const tokenURI = await readContract({
+              ...nftContract,
+              functionName: "tokenURI",
+              args: [tokenId],
+            })
+
+            // Essayer de parser les métadonnées si possible
+            let parsedMetadata
+            try {
+              if (typeof tokenURI === "string" && tokenURI.startsWith("{")) {
+                parsedMetadata = JSON.parse(tokenURI as string)
+              }
+            } catch (e) {
+              console.error("Erreur lors du parsing des métadonnées:", e)
+            }
+
+            nfts.push({
+              tokenId: tokenId as bigint,
+              tokenURI: tokenURI as string,
+              parsedMetadata,
+            })
+          } catch (err) {
+            console.error(`Erreur lors de la récupération du NFT à l'index ${i}:`, err)
           }
-        })
+        }
 
         setOwnedNFTs(nfts)
       } catch (error) {
