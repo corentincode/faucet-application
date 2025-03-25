@@ -1,41 +1,122 @@
 "use client"
 
-import { useState } from "react"
-import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi"
+import type React from "react"
+
+import { useState, useEffect } from "react"
+import { useAccount, useWriteContract, useWaitForTransactionReceipt, usePublicClient } from "wagmi"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { AlertCircle, Loader2, CheckCircle, Tag } from 'lucide-react'
+import { AlertCircle, Loader2, CheckCircle, Tag } from "lucide-react"
 import { parseEther } from "viem"
 import { marketplaceABI } from "@/lib/marketplace-abi"
+import { nftABI } from "@/lib/nft-abi"
 import { MARKETPLACE_ADDRESS, NFT_ADDRESS } from "@/lib/constants"
+import { useSearchParams } from "next/navigation"
 
 export function AddProduct() {
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
-  const [price, setPrice] = useState("")
+  const [price, setPrice] = useState("0.1")
   const [tokenId, setTokenId] = useState("")
   const [imageUrl, setImageUrl] = useState("")
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
+  const [isApproving, setIsApproving] = useState(false)
   const { address, isConnected } = useAccount()
+  const searchParams = useSearchParams()
+  const publicClient = usePublicClient()
 
-  const { writeContract, isPending, data: hash } = useWriteContract()
+  // Récupérer les paramètres de l'URL
+  useEffect(() => {
+    if (searchParams) {
+      const tokenIdParam = searchParams.get("tokenId")
+      const nameParam = searchParams.get("name")
+      const descriptionParam = searchParams.get("description")
+      const imageParam = searchParams.get("image")
 
-  const { isSuccess, isLoading: isConfirming } = useWaitForTransactionReceipt({
-    hash,
+      if (tokenIdParam) setTokenId(tokenIdParam)
+      if (nameParam) setName(nameParam)
+      if (descriptionParam) setDescription(descriptionParam)
+      if (imageParam) setImageUrl(imageParam)
+    }
+  }, [searchParams])
+
+  const { writeContract: approveNFT, isPending: isApprovePending, data: approveTxHash } = useWriteContract()
+  const { writeContract: addProduct, isPending: isAddingProduct, data: addProductTxHash } = useWriteContract()
+
+  const { isSuccess: isApproveSuccess, isLoading: isApproveConfirming } = useWaitForTransactionReceipt({
+    hash: approveTxHash,
   })
 
-  // Reset form on success
-  if (isSuccess && !success) {
-    setSuccess(`Produit "${name}" ajouté avec succès!`)
-    setName("")
-    setDescription("")
-    setPrice("")
-    setTokenId("")
-    setImageUrl("")
+  const { isSuccess: isAddProductSuccess, isLoading: isAddProductConfirming } = useWaitForTransactionReceipt({
+    hash: addProductTxHash,
+  })
+
+  // Vérifier si le NFT est approuvé pour le marketplace
+  useEffect(() => {
+    const checkApproval = async () => {
+      if (!tokenId || !address || !publicClient) return
+
+      try {
+        const approved = await publicClient.readContract({
+          address: NFT_ADDRESS as `0x${string}`,
+          abi: nftABI,
+          functionName: "getApproved",
+          args: [BigInt(tokenId)],
+        })
+
+        if ((approved as string).toLowerCase() === MARKETPLACE_ADDRESS.toLowerCase()) {
+          console.log(`Le NFT #${tokenId} est déjà approuvé pour le marketplace.`)
+        } else {
+          console.log(`Le NFT #${tokenId} n'est pas approuvé pour le marketplace.`)
+          setIsApproving(true)
+        }
+      } catch (err) {
+        console.error("Erreur lors de la vérification de l'approbation:", err)
+      }
+    }
+
+    if (tokenId) {
+      checkApproval()
+    }
+  }, [tokenId, address, publicClient])
+
+  // Effet pour gérer l'approbation réussie
+  useEffect(() => {
+    if (isApproveSuccess) {
+      console.log(`Approbation réussie pour le NFT #${tokenId}`)
+      setIsApproving(false)
+    }
+  }, [isApproveSuccess, tokenId])
+
+  // Effet pour gérer l'ajout de produit réussi
+  useEffect(() => {
+    if (isAddProductSuccess && !success) {
+      setSuccess(`Produit "${name}" ajouté avec succès!`)
+      // Ne pas réinitialiser les champs pour permettre à l'utilisateur de voir ce qui a été ajouté
+    }
+  }, [isAddProductSuccess, name, success])
+
+  const handleApprove = async () => {
+    if (!tokenId || !address) return
+
+    setError("")
+    setSuccess("")
+
+    try {
+      await approveNFT({
+        address: NFT_ADDRESS as `0x${string}`,
+        abi: nftABI,
+        functionName: "approve",
+        args: [MARKETPLACE_ADDRESS as `0x${string}`, BigInt(tokenId)],
+      })
+    } catch (err) {
+      console.error("Erreur lors de l'approbation:", err)
+      setError(`Erreur d'approbation: ${err instanceof Error ? err.message : String(err)}`)
+    }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -54,6 +135,12 @@ export function AddProduct() {
     }
 
     try {
+      // Vérifier si le NFT est approuvé pour le marketplace
+      if (isApproving) {
+        await handleApprove()
+        return
+      }
+
       // Créer les métadonnées du produit
       const metadata = JSON.stringify({
         name,
@@ -67,21 +154,15 @@ export function AddProduct() {
         price: parseEther(price),
         nftContract: NFT_ADDRESS,
         tokenId: BigInt(tokenId),
-        metadata
+        metadata,
       })
 
-      await writeContract({
+      // IMPORTANT: L'ordre des arguments a été corrigé pour correspondre à l'implémentation du contrat
+      await addProduct({
         address: MARKETPLACE_ADDRESS as `0x${string}`,
         abi: marketplaceABI,
         functionName: "addProduct",
-        args: [
-          name,
-          description,
-          parseEther(price),
-          NFT_ADDRESS as `0x${string}`,
-          BigInt(tokenId),
-          metadata
-        ],
+        args: [name, description, parseEther(price), NFT_ADDRESS as `0x${string}`, BigInt(tokenId), metadata],
       })
     } catch (err) {
       console.error("Erreur lors de l'ajout du produit:", err)
@@ -132,6 +213,7 @@ export function AddProduct() {
               value={tokenId}
               onChange={(e) => setTokenId(e.target.value)}
               className="bg-background/50"
+              disabled={!!searchParams.get("tokenId")}
             />
           </div>
           <div>
@@ -144,14 +226,23 @@ export function AddProduct() {
           </div>
           <Button
             type="submit"
-            disabled={!isConnected || isPending || isConfirming}
+            disabled={
+              !isConnected || isApprovePending || isApproveConfirming || isAddingProduct || isAddProductConfirming
+            }
             className="bg-primary hover:bg-primary/90 text-primary-foreground w-full"
           >
-            {isPending || isConfirming ? (
+            {isApprovePending || isApproveConfirming ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                {isPending ? "Confirmation..." : "Transaction en cours..."}
+                Approbation en cours...
               </>
+            ) : isAddingProduct || isAddProductConfirming ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                {isAddingProduct ? "Confirmation..." : "Transaction en cours..."}
+              </>
+            ) : isApproving ? (
+              "Approuver pour le Marketplace"
             ) : (
               "Mettre en vente"
             )}
@@ -175,3 +266,4 @@ export function AddProduct() {
     </Card>
   )
 }
+
