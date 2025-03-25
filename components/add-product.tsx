@@ -1,8 +1,7 @@
 "use client"
 
 import type React from "react"
-
-import { useState, useEffect } from "react"
+import { useState, useEffect, Suspense } from "react"
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, usePublicClient } from "wagmi"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -15,8 +14,10 @@ import { marketplaceABI } from "@/lib/marketplace-abi"
 import { nftABI } from "@/lib/nft-abi"
 import { MARKETPLACE_ADDRESS, NFT_ADDRESS } from "@/lib/constants"
 import { useSearchParams } from "next/navigation"
+import { Skeleton } from "@/components/ui/skeleton"
 
-export function AddProduct() {
+// Composant qui utilise useSearchParams enveloppé dans Suspense
+function AddProductForm() {
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
   const [price, setPrice] = useState("0.1")
@@ -149,15 +150,15 @@ export function AddProduct() {
       })
 
       console.log("Tentative d'ajout de produit:", {
+        nftContract: NFT_ADDRESS,
+        tokenId: BigInt(tokenId),
         name,
         description,
         price: parseEther(price),
-        nftContract: NFT_ADDRESS,
-        tokenId: BigInt(tokenId),
         metadata,
       })
 
-      // IMPORTANT: L'ordre des arguments a été corrigé pour correspondre à l'implémentation du contrat
+      // Utiliser l'ordre correct des arguments selon l'ABI
       await addProduct({
         address: MARKETPLACE_ADDRESS as `0x${string}`,
         abi: marketplaceABI,
@@ -171,6 +172,106 @@ export function AddProduct() {
   }
 
   return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div>
+        <Input
+          placeholder="Nom du produit"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className="bg-background/50"
+        />
+      </div>
+      <div>
+        <Textarea
+          placeholder="Description"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          className="bg-background/50"
+          rows={3}
+        />
+      </div>
+      <div>
+        <Input
+          placeholder="Prix (en TEST)"
+          type="text"
+          value={price}
+          onChange={(e) => setPrice(e.target.value)}
+          className="bg-background/50"
+        />
+      </div>
+      <div>
+        <Input
+          placeholder="ID du token NFT"
+          value={tokenId}
+          onChange={(e) => setTokenId(e.target.value)}
+          className="bg-background/50"
+          disabled={!!searchParams.get("tokenId")}
+        />
+      </div>
+      <div>
+        <Input
+          placeholder="URL de l'image (optionnel)"
+          value={imageUrl}
+          onChange={(e) => setImageUrl(e.target.value)}
+          className="bg-background/50"
+        />
+      </div>
+      <Button
+        type="submit"
+        disabled={!isConnected || isApprovePending || isApproveConfirming || isAddingProduct || isAddProductConfirming}
+        className="bg-primary hover:bg-primary/90 text-primary-foreground w-full"
+      >
+        {isApprovePending || isApproveConfirming ? (
+          <>
+            <Loader2 className="h-4 w-4 animate-spin mr-2" />
+            Approbation en cours...
+          </>
+        ) : isAddingProduct || isAddProductConfirming ? (
+          <>
+            <Loader2 className="h-4 w-4 animate-spin mr-2" />
+            {isAddingProduct ? "Confirmation..." : "Transaction en cours..."}
+          </>
+        ) : isApproving ? (
+          "Approuver pour le Marketplace"
+        ) : (
+          "Mettre en vente"
+        )}
+      </Button>
+
+      {error && (
+        <Alert className="bg-destructive/10 border-destructive/30 text-foreground">
+          <AlertCircle className="h-4 w-4 text-destructive mr-2" />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      {success && (
+        <Alert className="bg-green-500/10 border-green-500/30 text-foreground">
+          <CheckCircle className="h-4 w-4 text-green-500 mr-2" />
+          <AlertDescription>{success}</AlertDescription>
+        </Alert>
+      )}
+    </form>
+  )
+}
+
+// Composant de chargement pour Suspense
+function AddProductLoading() {
+  return (
+    <div className="space-y-4">
+      <Skeleton className="h-10 w-full" />
+      <Skeleton className="h-24 w-full" />
+      <Skeleton className="h-10 w-full" />
+      <Skeleton className="h-10 w-full" />
+      <Skeleton className="h-10 w-full" />
+      <Skeleton className="h-10 w-full" />
+    </div>
+  )
+}
+
+// Composant principal qui utilise Suspense
+export function AddProduct() {
+  return (
     <Card className="backdrop-blur-sm bg-secondary/30 border-border overflow-hidden">
       <CardHeader>
         <CardTitle className="text-lg flex items-center">
@@ -180,88 +281,9 @@ export function AddProduct() {
         <CardDescription>Listez votre NFT sur le marketplace pour le vendre</CardDescription>
       </CardHeader>
       <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <Input
-              placeholder="Nom du produit"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="bg-background/50"
-            />
-          </div>
-          <div>
-            <Textarea
-              placeholder="Description"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              className="bg-background/50"
-              rows={3}
-            />
-          </div>
-          <div>
-            <Input
-              placeholder="Prix (en TEST)"
-              type="text"
-              value={price}
-              onChange={(e) => setPrice(e.target.value)}
-              className="bg-background/50"
-            />
-          </div>
-          <div>
-            <Input
-              placeholder="ID du token NFT"
-              value={tokenId}
-              onChange={(e) => setTokenId(e.target.value)}
-              className="bg-background/50"
-              disabled={!!searchParams.get("tokenId")}
-            />
-          </div>
-          <div>
-            <Input
-              placeholder="URL de l'image (optionnel)"
-              value={imageUrl}
-              onChange={(e) => setImageUrl(e.target.value)}
-              className="bg-background/50"
-            />
-          </div>
-          <Button
-            type="submit"
-            disabled={
-              !isConnected || isApprovePending || isApproveConfirming || isAddingProduct || isAddProductConfirming
-            }
-            className="bg-primary hover:bg-primary/90 text-primary-foreground w-full"
-          >
-            {isApprovePending || isApproveConfirming ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                Approbation en cours...
-              </>
-            ) : isAddingProduct || isAddProductConfirming ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                {isAddingProduct ? "Confirmation..." : "Transaction en cours..."}
-              </>
-            ) : isApproving ? (
-              "Approuver pour le Marketplace"
-            ) : (
-              "Mettre en vente"
-            )}
-          </Button>
-
-          {error && (
-            <Alert className="bg-destructive/10 border-destructive/30 text-foreground">
-              <AlertCircle className="h-4 w-4 text-destructive mr-2" />
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
-
-          {success && (
-            <Alert className="bg-green-500/10 border-green-500/30 text-foreground">
-              <CheckCircle className="h-4 w-4 text-green-500 mr-2" />
-              <AlertDescription>{success}</AlertDescription>
-            </Alert>
-          )}
-        </form>
+        <Suspense fallback={<AddProductLoading />}>
+          <AddProductForm />
+        </Suspense>
       </CardContent>
     </Card>
   )
